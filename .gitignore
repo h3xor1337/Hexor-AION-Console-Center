@@ -1,0 +1,56 @@
+# Generated builds and release/customer payloads, at any project depth.
+**/bin/
+**/obj/
+**/.build/
+**/.obj-build/
+/output/
+/publish/
+/artifacts/
+/.vs/
+/.idea/
+/.impeccable/
+*.user
+*.suo
+*.tmp
+*.log
+*.dmp
+*.bak
+*.zip
+*.7z
+*.exe
+*.dll
+*.pdb
+*.msi
+*.msix
+
+# Vendor reference/installed files, private captures and customer state.
+/LegionCommander_Reference/
+**/WebView2/
+**/EBWebView/
+**/User Data/
+**/logs/
+**/snapshots/
+**/protected-baselines/
+*.reg
+*.db
+*.sqlite*
+preferences.json
+settings.json
+machine.json
+
+# Signing material and secrets. Updates/trust.json is a required PUBLIC key.
+.env
+.env.*
+*.pfx
+*.p12
+*.pem
+*.key
+*.snk
+*credentials*.json
+*secrets*.json
+
+# Historical local evidence is not part of the application source import.
+/HEXOR_INTEGRATION_REPORT.md
+/HEXOR_VERIFIED_SETTINGS_MAPPING.md
+/docs/*
+!/docs/LC_REGISTRY_UPDATE.md

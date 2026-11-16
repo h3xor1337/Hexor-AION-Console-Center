@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType><TargetFramework>net10.0-windows</TargetFramework><UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings><AssemblyName>Hexor-AION-Control-Center</AssemblyName>
+    <Version>1.0.13</Version>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier><PublishSingleFile>true</PublishSingleFile><SelfContained>true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract><EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon Condition="Exists('Assets\Hex Logo-Transparent.ico')">Assets\Hex Logo-Transparent.ico</ApplicationIcon>
+    <!-- Reference material is never compiled, embedded, or published with Hexor. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);LegionCommander_Reference\**;output\**;.build\**;.obj-build\**</DefaultItemExcludes>
+  </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="Assets\Hex Logo-Transparent.ico" Condition="Exists('Assets\Hex Logo-Transparent.ico')" />
+    <Resource Include="Assets\Hex Logo-Transparent.png" Condition="Exists('Assets\Hex Logo-Transparent.png')" />
+    <Compile Remove="tests\**;Updater\**;UpdateTests\**;ReleaseTools\**;LegionCommander_Reference\**;obj\**;.build\**;.obj-build\**" />
+    <EmbeddedResource Include="Updates\trust.json" LogicalName="Hexor.UpdateTrust" />
+    <Page Remove="LegionCommander_Reference\**" />
+    <Resource Remove="LegionCommander_Reference\**" />
+    <EmbeddedResource Remove="LegionCommander_Reference\**" />
+    <Content Remove="LegionCommander_Reference\**" />
+    <None Remove="LegionCommander_Reference\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Hexor.Tests" />
+  </ItemGroup>
+</Project>

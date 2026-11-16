@@ -1,0 +1,73 @@
+#requires -Version 7.0
+[CmdletBinding()]
+param(
+ [Parameter(Mandatory)][ValidatePattern('^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$')][string]$Version,
+ [Parameter(Mandatory)][string]$PrivateKeyPath,
+ [string]$GitHubRepository,
+ [string]$DownloadUrl,
+ [Parameter(Mandatory)][string]$ReleaseNotesPath,
+ [string]$OutputDirectory,
+ [switch]$Mandatory,
+ [switch]$PublishGitHub
+)
+$ErrorActionPreference='Stop'
+$root=Split-Path -Parent $PSScriptRoot
+$keyPath=(Resolve-Path -LiteralPath $PrivateKeyPath).Path
+if($keyPath.StartsWith($root+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Private key must be outside the repository'}
+$aioRoot=[IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $root) 'Aion AIO'))
+if($keyPath.StartsWith($aioRoot+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Private key must be outside the AIO Installer repository'}
+$trust=Get-Content -Raw -LiteralPath (Join-Path $root 'Updates\trust.json') | ConvertFrom-Json
+if(-not $trust.PublicKeyPem -or ([uri]$trust.ManifestUrl).Scheme -ne 'https'){throw 'Configure embedded Updates/trust.json before publishing'}
+Import-Module (Join-Path $PSScriptRoot 'HexorGitHubRelease.psm1') -Force
+if(-not $GitHubRepository){
+ if($trust.ManifestUrl -cmatch '^https://raw\.githubusercontent\.com/([^/]+/[^/]+)/main/latest\.json$'){$GitHubRepository=$Matches[1]}
+ else{throw 'Supply the approved GitHubRepository and configure its raw GitHub manifest URL in embedded trust first.'}
+}
+$github=Get-HexorGitHubReleaseConfiguration -GitHubRepository $GitHubRepository -Version $Version -Trust $trust
+if($DownloadUrl -and $DownloadUrl -cne $github.DownloadUrl){throw "DownloadUrl must match the versioned GitHub asset: $($github.DownloadUrl)"}
+$DownloadUrl=$github.DownloadUrl
+$rsa=[Security.Cryptography.RSA]::Create()
+try{
+ $rsa.ImportFromPem([IO.File]::ReadAllText($keyPath))
+ if($rsa.KeySize -lt 3072 -or $rsa.ExportSubjectPublicKeyInfoPem().Trim() -ne $trust.PublicKeyPem.Trim()){throw 'Signing key does not match embedded trusted public key (RSA 3072+ required)'}
+ $notes=[IO.File]::ReadAllText((Resolve-Path -LiteralPath $ReleaseNotesPath).Path)
+ if($notes.Length -gt 24000){throw 'Release notes exceed manifest limit'}
+ $out=if($OutputDirectory){[IO.Path]::GetFullPath($OutputDirectory)}else{Join-Path $root "output\releases\$Version"}
+ if(Test-Path -LiteralPath $out){throw 'Release output already exists; choose a new version or explicitly archive previous output'}
+ New-Item -ItemType Directory -Path $out | Out-Null
+ & dotnet build (Join-Path $root 'tests\Hexor.Tests.csproj') -c Release -r win-x64
+ if($LASTEXITCODE -ne 0){throw 'Test executable build failed'}
+ & (Join-Path $root 'tests\bin\Release\net10.0-windows\win-x64\Hexor.Tests.exe')
+ if($LASTEXITCODE -ne 0){throw 'Existing tests failed'}
+ & dotnet run --project (Join-Path $root 'UpdateTests\UpdateTests.csproj') -c Release
+ if($LASTEXITCODE -ne 0){throw 'Updater tests failed'}
+ & (Join-Path $PSScriptRoot 'Test-HexorGitHubPublishing.ps1')
+ $payload=Join-Path $out 'payload'
+ & dotnet publish (Join-Path $root 'Hexor.ControlCenter.csproj') -t:Rebuild -c Release -r win-x64 --self-contained true "-p:Version=$Version" -p:DebugType=None -p:DebugSymbols=false -o $payload
+ if($LASTEXITCODE -ne 0){throw 'Control Center publish failed'}
+ & dotnet publish (Join-Path $root 'Updater\Hexor.Updater.csproj') -t:Rebuild -c Release -r win-x64 --self-contained true "-p:Version=$Version" -p:DebugType=None -p:DebugSymbols=false -o $payload
+ if($LASTEXITCODE -ne 0){throw 'Helper publish failed'}
+ $files=@(Get-ChildItem -LiteralPath $payload -File -Recurse)
+ if($files.Count -ne 2 -or @($files | Where-Object Name -notin @('Hexor-AION-Control-Center.exe','Hexor.Updater.exe')).Count){throw 'Unexpected package files'}
+ $expectedVersion=[version]$Version
+ foreach($file in $files){
+  $actual=[Diagnostics.FileVersionInfo]::GetVersionInfo($file.FullName)
+  $actualVersion=[version]::new($actual.FileMajorPart,$actual.FileMinorPart,$actual.FileBuildPart)
+  if($actualVersion -ne $expectedVersion){throw "Published executable version metadata does not match ${Version}: $($file.Name) reports $actualVersion"}
+ }
+ $package=Join-Path $out "Hexor-$Version-win-x64.zip"
+ Compress-Archive -LiteralPath $files.FullName -DestinationPath $package
+ $hash=(Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant()
+ $manifest=[ordered]@{SchemaVersion=1;Version=$Version;ReleaseDate=[DateTimeOffset]::UtcNow.ToString('O');DownloadUrl=$DownloadUrl;Sha256=$hash;ReleaseNotes=$notes;MinimumUpdaterVersion='1.0.0';Mandatory=[bool]$Mandatory}
+ $bytes=[Text.Encoding]::UTF8.GetBytes(($manifest | ConvertTo-Json -Compress))
+ $signature=$rsa.SignData($bytes,[Security.Cryptography.HashAlgorithmName]::SHA256,[Security.Cryptography.RSASignaturePadding]::Pss)
+ @{Payload=[Convert]::ToBase64String($bytes);Signature=[Convert]::ToBase64String($signature)} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $out 'latest.json') -Encoding utf8
+ "$hash  $([IO.Path]::GetFileName($package))" | Set-Content -LiteralPath (Join-Path $out 'SHA256SUMS.txt')
+ $notes | Set-Content -LiteralPath (Join-Path $out 'RELEASE-NOTES.md')
+ Write-Output "Release prepared at $out. GitHub asset: $DownloadUrl. Stable manifest: $($trust.ManifestUrl)."
+}finally{$rsa.Dispose()}
+if($PublishGitHub){
+ & (Join-Path $PSScriptRoot 'Publish-HexorGitHub.ps1') -Version $Version -GitHubRepository $GitHubRepository -ReleaseDirectory $out -PublishGitHub
+}else{
+ Write-Output 'No files were uploaded. After configuration approval, publish this prepared release with scripts/Publish-HexorGitHub.ps1 -Version <version> -GitHubRepository <actual-owner/repository> -PublishGitHub.'
+}

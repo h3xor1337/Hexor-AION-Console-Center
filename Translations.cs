@@ -1,0 +1,15 @@
+namespace Hexor;
+public static class Translations
+{
+ private static readonly Dictionary<string,(string Chinese,string Korean)> Words=new()
+ {
+  ["General"]=("常规","일반"),["Daily Activities"]=("日常活动","일일 활동"),["Auto Task"]=("自动任务","자동 임무"),["Character Enhancement"]=("角色强化","캐릭터 강화"),["Work Schedule"]=("工作计划","작업 일정"),["Shugo Festival"]=("修古庆典","슈고 축제"),
+  ["Language & preferences"]=("语言与偏好","언어 및 환경 설정"),["Control Center Language"]=("控制中心语言","제어 센터 언어"),["Preferred Game Language"]=("首选游戏语言","선호 게임 언어"),["Configuration discovery"]=("配置发现","설정 검색"),["Refresh discovery"]=("刷新配置","다시 검색"),["Choose configuration folder"]=("选择配置文件夹","설정 폴더 선택"),["Connection status"]=("连接状态","연결 상태"),
+  ["Instruction sequence"]=("指令序列","명령 순서"),["Presets"]=("预设","프리셋"),["Enabled"]=("启用","사용"),["Add"]=("添加","추가"),["Duplicate"]=("复制","복제"),["Delete"]=("删除","삭제"),["Move up"]=("上移","위로"),["Move down"]=("下移","아래로"),["Gathering & completion"]=("采集与完成","채집 및 완료"),["Apply instruction settings"]=("应用指令设置","명령 설정 적용"),
+  ["Gathering duration minimum (minutes)"]=("最短采集时间（分钟）","최소 채집 시간 (분)"),["Gathering duration maximum (minutes)"]=("最长采集时间（分钟）","최대 채집 시간 (분)"),["Reset timer"]=("重置计时器","타이머 초기화"),["Prepare combat before instructions"]=("执行指令前准备战斗","명령 실행 전 전투 준비"),["After all characters finish"]=("所有角色完成后","모든 캐릭터 완료 후"),
+  ["Character profile"]=("角色资料","캐릭터 정보"),["Task behavior"]=("任务行为","임무 동작"),["Auto Enchant Gear Level Cap"]=("自动强化装备上限","자동 장비 강화 상한"),["New configured value"]=("新的配置值","새 설정 값"),["Apply gear cap"]=("应用强化上限","강화 상한 적용"),["Membership Benefits & Auto Dungeon"]=("会员福利与自动副本","멤버십 혜택 및 자동 던전"),
+  ["Clear side quests before dungeon quests"]=("副本任务前完成支线任务","던전 임무 전 부가 임무 완료"),["Explore caves before dungeon quests"]=("副本任务前探索洞穴","던전 임무 전 동굴 탐험"),["Switch to gathering after tasks complete"]=("任务完成后切换采集","임무 완료 후 채집 전환"),["Auto daily quests"]=("自动日常任务","자동 일일 임무"),["Automatically buy Od Energy"]=("自动购买奥德能量","오드 에너지 자동 구매"),["Automatically buy Resurrection Stones"]=("自动购买复活石","부활석 자동 구매"),["Quick Join existing rooms at 60K+ battle power"]=("战斗力 6 万以上快速加入房间","전투력 6만 이상 기존 방 빠른 참가"),
+  ["Enable Work Schedule"]=("启用工作计划","작업 일정 사용"),["Maximum accounts online"]=("最大在线账号数","최대 온라인 계정 수"),["Work duration minimum (minutes)"]=("最短工作时间（分钟）","최소 작업 시간 (분)"),["Work duration maximum (minutes)"]=("最长工作时间（分钟）","최대 작업 시간 (분)"),["Rest duration minimum (minutes)"]=("最短休息时间（分钟）","최소 휴식 시간 (분)"),["Rest duration maximum (minutes)"]=("最长休息时间（分钟）","최대 휴식 시간 (분)"),["Save schedule"]=("保存计划","일정 저장"),["Automatically Enter Shugo Festival"]=("自动进入修古庆典","슈고 축제 자동 입장"),["Stay AFK in Shugo Festival"]=("在修古庆典中挂机","슈고 축제에서 대기")
+ };
+ public static string Get(string language,string text)=>Words.TryGetValue(text,out var entry)?language switch{"简体中文"=>entry.Chinese,"한국어"=>entry.Korean,_=>text}:text;
+}
