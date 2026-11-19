@@ -93,3 +93,14 @@ public sealed class VendorOverlayCleanupService
     private static string Hash(string path) { using var stream = File.OpenRead(path); return Convert.ToHexString(SHA256.HashData(stream)); }
     private static bool IsProcessRunning(string name) { var processes = Process.GetProcessesByName(name); try { return processes.Length != 0; } finally { foreach (var process in processes) process.Dispose(); } }
 }
+public static class AppLayout
+{
+    // AppContext.BaseDirectory ends with a separator; Directory.GetParent on that returns the
+    // directory itself, which once made the console look for "AION Auto Updater" inside its own
+    // install folder. Always trim before resolving the parent.
+    public static string? InstallParent()
+    {
+        var baseDirectory = Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory);
+        return Directory.GetParent(baseDirectory)?.FullName;
+    }
+}

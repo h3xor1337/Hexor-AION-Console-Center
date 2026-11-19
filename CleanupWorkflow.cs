@@ -22,7 +22,7 @@ public sealed class CleanupWorkflow
     private readonly Func<string> manifestPath;
     private readonly Func<string> cacheRoot;
     public CleanupWorkflow(AionInstallationDiscoveryService? installations = null, VendorOverlayCleanupService? overlays = null, Func<string>? manifestPath = null, UpdaterCacheCleanupService? cache = null, Func<string>? cacheRoot = null, PathMatchedDxgiCleanupService? pathDxgi = null,UpdaterDataCleanupService? updaterData=null)
-    { this.installations = installations ?? new(); this.overlays = overlays ?? new(); this.cache = cache ?? new(); this.pathDxgi=pathDxgi??new();this.updaterData=updaterData??new(); this.manifestPath = manifestPath ?? new Func<string>(() => Path.Combine(Directory.GetParent(AppContext.BaseDirectory)?.FullName ?? "", "AION Auto Updater", VendorOverlayCleanupService.ManifestName)); this.cacheRoot = cacheRoot ?? new Func<string>(() => UpdaterCacheCleanupService.DefaultCacheRoot); }
+    { this.installations = installations ?? new(); this.overlays = overlays ?? new(); this.cache = cache ?? new(); this.pathDxgi=pathDxgi??new();this.updaterData=updaterData??new(); this.manifestPath = manifestPath ?? new Func<string>(() => Path.Combine(AppLayout.InstallParent() ?? "", "AION Auto Updater", VendorOverlayCleanupService.ManifestName)); this.cacheRoot = cacheRoot ?? new Func<string>(() => UpdaterCacheCleanupService.DefaultCacheRoot); }
 
     public Task<CleanupPlan> PrepareAsync(Action<string>? progress = null, CancellationToken cancellationToken = default) => Task.Run(() =>
     {

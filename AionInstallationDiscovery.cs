@@ -23,7 +23,7 @@ public sealed class AionInstallationDiscoveryService
     public IReadOnlyList<AionInstallation> DiscoverFromSteamLibraries(IEnumerable<string> steamLibraries)
     {
         var found = new List<AionInstallation>();
-        foreach (var library in steamLibraries.Where(Directory.Exists).Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (var library in steamLibraries.Where(Directory.Exists).Select(p => Path.GetFullPath(p)).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var installation = Path.Combine(library, "steamapps", "common", "AION2");
             var executable = Path.Combine(installation, "Aion2", "Binaries", "Win64", "Aion2.exe");
@@ -44,12 +44,14 @@ public sealed class AionInstallationDiscoveryService
     {
         var roots = new List<string>();
         using var steam = Registry.CurrentUser.OpenSubKey("Software\\Valve\\Steam");
-        if (steam?.GetValue("SteamPath") is string steamPath && Directory.Exists(steamPath)) roots.Add(steamPath);
+        // SteamPath is written with forward slashes on some installs; normalize so the same
+        // library is not discovered twice under two spellings (false MultipleInstallations).
+        if (steam?.GetValue("SteamPath") is string steamPath && Directory.Exists(steamPath)) roots.Add(Path.GetFullPath(steamPath));
         foreach (var root in roots.ToArray())
         {
             var vdf = Path.Combine(root, "steamapps", "libraryfolders.vdf");
             if (!File.Exists(vdf)) continue;
-            try { roots.AddRange(System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(vdf), "\\\"path\\\"\\s+\\\"([^\\\"]+)\\\"").Select(m => m.Groups[1].Value.Replace("\\\\", "\\"))); }
+            try { roots.AddRange(System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(vdf), "\\\"path\\\"\\s+\\\"([^\\\"]+)\\\"").Select(m => m.Groups[1].Value.Replace("\\\\", "\\").Replace('/', '\\'))); }
             catch (IOException) { }
         }
         return roots.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();

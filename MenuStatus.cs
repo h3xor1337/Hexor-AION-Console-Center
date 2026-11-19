@@ -32,7 +32,7 @@ public sealed class MenuStatusService
             if (!File.Exists(installation.OverlayPath)) return new(MenuStatusState.NotDetected, "Not detected", installation.ExecutablePath, installation.OverlayPath);
             var inspection = cleanup.Inspect(installation.ExecutablePath, manifestPath);
             if (inspection.State == VendorOverlayCleanupState.CouldNotVerify)
-                return new(MenuStatusState.VerificationRequired, "Verification required — menu ownership or installation path is uncertain.", installation.ExecutablePath, installation.OverlayPath);
+                { Diagnostics.Log("menu-status", "ownership-unverified; reason=" + inspection.Message); return new(MenuStatusState.VerificationRequired, "Verification required — menu ownership or installation path is uncertain.", installation.ExecutablePath, installation.OverlayPath); }
             if (inspection.State != VendorOverlayCleanupState.Skipped || !inspection.Message.StartsWith("Verified", StringComparison.Ordinal))
                 return new(MenuStatusState.Error, "Error — menu status could not be determined.", installation.ExecutablePath, installation.OverlayPath);
             if (gameRunning()) return new(MenuStatusState.GameRunning, "Game running — close AION2 before unloading the menu.", installation.ExecutablePath, installation.OverlayPath);

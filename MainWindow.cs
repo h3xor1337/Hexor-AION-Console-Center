@@ -264,7 +264,7 @@ public sealed class MainWindow : Window
   var diagnostics=new Expander{Name="DiagnosticsExpander",Header="Advanced settings & diagnostics",IsExpanded=false,Foreground=Brushes.White,Content=advanced};root.Children.Add(Card(diagnostics));
  }
   private static void OpenPath(string path){try{if(path==Diagnostics.ActiveLogPath&&!System.IO.File.Exists(path))Diagnostics.Log("diagnostics","active-log-created");System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path){UseShellExecute=true});}catch(Exception e) when(e is System.IO.IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception){Diagnostics.Log("diagnostics","open-failed; type="+e.GetType().Name);}}
-  private string MenuManifestPath(){var parent=System.IO.Directory.GetParent(AppContext.BaseDirectory)?.FullName;return parent==null?"":System.IO.Path.Combine(parent,"AION Auto Updater",VendorOverlayCleanupService.ManifestName);}
+  private string MenuManifestPath(){var parent=AppLayout.InstallParent();return parent==null?"":System.IO.Path.Combine(parent,"AION Auto Updater",VendorOverlayCleanupService.ManifestName);}
   private IReadOnlyList<AionInstallation> MenuInstallations()
   {
    var discovery=new AionInstallationDiscoveryService();var found=discovery.DiscoverFromSteamLibraries(discovery.ReadSteamLibraries()).ToList();
@@ -346,7 +346,7 @@ public sealed class MainWindow : Window
  private void ReviewVendorOverlayCleanup()
  {
   var executable=Model.Detection.ExecutablePath;
-  var root=System.IO.Directory.GetParent(AppContext.BaseDirectory)?.FullName;
+  var root=AppLayout.InstallParent();
   var manifest=root==null?"":System.IO.Path.Combine(root,"AION Auto Updater",VendorOverlayCleanupService.ManifestName);
   var service=new VendorOverlayCleanupService();var inspection=service.Inspect(executable??"",manifest);
   if(inspection.State!=VendorOverlayCleanupState.Skipped||!inspection.Message.StartsWith("Verified",StringComparison.Ordinal)) {MessageBox.Show(this,inspection.Message,"Optional AION overlay cleanup",MessageBoxButton.OK,MessageBoxImage.Information);return;}
