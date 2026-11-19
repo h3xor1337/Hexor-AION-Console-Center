@@ -434,8 +434,10 @@ public sealed class MainViewModel : Observable, IDisposable
     public bool CaptchaChallengeActive => captchaSnapshot.ChallengeActive;
     public IReadOnlyList<string> CaptchaRecordLines { get; private set; } = [];
     public string CaptchaRecordsSummary => CaptchaRecordLines.Count == 0
-        ? "No CAPTCHA status changes observed since Hexor started."
-        : "Latest status changes observed since Hexor started.";
+        ? "Nothing yet. Challenges, answers and results appear here as they happen."
+        : $"Latest challenge activity ({CaptchaRecordLines.Count} entries).";
+    private readonly object recordLock = new();
+    private readonly List<(DateTimeOffset At, string Text)> solverRecordHistory = new();
     // Pause hold for Hexor's own apply actions. Hexor never pauses or controls the running
     // automation: only Hexor's own provider-setting applies (workflow/schedule) are held while a
     // challenge signal is active, and — when CaptchaResumeConfirmation is enabled — until the
@@ -706,10 +708,37 @@ public sealed class MainViewModel : Observable, IDisposable
         LiveGameStatus = gameIpc.Describe();
         RebuildLiveItems();
         UpdateCaptchaAutoStatus();
+        RefreshCaptchaActivityLog();
+    }
+
+    // Activity log merges the auto-resolver's own challenge history with the visual monitor's
+    // observations, newest first, so a challenge that was solved or rejected always appears.
+    private void RefreshCaptchaActivityLog()
+    {
+        var entries = new List<(DateTimeOffset At, string Text)>();
+        entries.AddRange(captchaSolver.History.Select(h => (h.At, "Auto-resolve: " + h.Text)));
+        lock (recordLock)
+        {
+            entries.AddRange(solverRecordHistory);
+        }
+        entries.AddRange(captchaSnapshot.RecentRecords.Select(record =>
+            (record.ObservedAt, "Monitor: " + CaptchaPhaseLabel(record.Phase))));
+        CaptchaRecordLines = entries.OrderByDescending(e => e.At)
+            .Take(50)
+            .Select(e => $"{e.At.ToLocalTime():yyyy-MM-dd HH:mm:ss}  ·  {e.Text}")
+            .ToArray();
+        Changed(nameof(CaptchaRecordLines));
+        Changed(nameof(CaptchaRecordsSummary));
     }
 
     private void UpdateCaptchaAutoStatus()
     {
+        lock (recordLock)
+        {
+            foreach (var entry in captchaSolver.History)
+                if (!solverRecordHistory.Contains(entry)) solverRecordHistory.Add(entry);
+            if (solverRecordHistory.Count > 50) solverRecordHistory.RemoveRange(0, solverRecordHistory.Count - 50);
+        }
         var text = captchaSolver.Describe();
         if (!gameIpc.Sessions().Any(s => s.ClientConnected && s.PipeOwnedByHexor))
             text += "\nThe auto-resolve listens while a game session is connected.";

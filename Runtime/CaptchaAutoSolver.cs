@@ -122,10 +122,17 @@ public sealed class CaptchaAutoSolver : IDisposable
     private string lastEvent = "Auto-resolve is armed. It answers a challenge as soon as the game shows one.";
     private DateTimeOffset? lastEventAt;
     private readonly bool enabled;
+    private readonly int minimumAnswerDelayMs;
+    private readonly int maximumAnswerDelayMs;
+    private readonly object historyLock = new();
+    private readonly List<(DateTimeOffset At, string Text)> history = new();
 
-    public CaptchaAutoSolver(GameIpcManager manager, Func<string, CancellationToken, Task<string>>? solveOverride = null, string? keyOverride = null)
+    public CaptchaAutoSolver(GameIpcManager manager, Func<string, CancellationToken, Task<string>>? solveOverride = null, string? keyOverride = null,
+        int minimumAnswerDelayMs = 700, int maximumAnswerDelayMs = 2200)
     {
         this.manager = manager;
+        this.minimumAnswerDelayMs = Math.Clamp(minimumAnswerDelayMs, 0, 10_000);
+        this.maximumAnswerDelayMs = Math.Clamp(Math.Max(maximumAnswerDelayMs, this.minimumAnswerDelayMs), this.minimumAnswerDelayMs, 15_000);
         var key = keyOverride ?? CaptchaSolverKey.Unlock();
         enabled = !string.IsNullOrWhiteSpace(key);
         if (enabled)
@@ -147,6 +154,72 @@ public sealed class CaptchaAutoSolver : IDisposable
     public int Waiting => pending.Count;
     public string LastEvent => lastEvent;
     public DateTimeOffset? LastEventAt => lastEventAt;
+    public IReadOnlyList<(DateTimeOffset At, string Text)> History
+    {
+        get { lock (historyLock) return [.. history]; }
+    }
+
+    // Every challenge image is archived beside the logs (with its outcome) so an operator can
+    // review what the solver received — especially the answers the game rejected.
+    internal static Func<string> SampleDirectoryResolver { get; set; } = () => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Hexor", "ControlCenter", "CaptchaSamples");
+    internal static Func<long>? TimeOverride;
+    private const int MaximumSampleFiles = 200;
+
+    private void SaveChallengeSample(int pid, string requestId, string imageBase64, string? mimeType)
+    {
+        try
+        {
+            var directory = SampleDirectoryResolver();
+            Directory.CreateDirectory(directory);
+            var extension = (mimeType ?? "").ToLowerInvariant() switch
+            {
+                "image/jpeg" or "image/jpg" => "jpg",
+                "image/gif" => "gif",
+                "image/bmp" => "bmp",
+                _ => "png",
+            };
+            var stamp = TimeOverride is { } clock ? DateTimeOffset.FromUnixTimeMilliseconds(clock()) : DateTimeOffset.UtcNow;
+            var safeRequest = string.Concat(requestId.Where(char.IsLetterOrDigit));
+            if (safeRequest.Length == 0) safeRequest = "challenge";
+            var path = Path.Combine(directory, $"{stamp:yyyyMMdd-HHmmssfff}-{pid}-{safeRequest}.{extension}");
+            File.WriteAllBytes(path, Convert.FromBase64String(imageBase64.Trim()));
+            PruneSamples(directory);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or FormatException)
+        {
+            Diagnostics.TryLog("captcha-solver", $"pid {pid}: challenge sample could not be saved ({e.GetType().Name})");
+        }
+    }
+
+    private void SaveOutcomeSample(int pid, string requestId, bool success, string message)
+    {
+        try
+        {
+            var directory = SampleDirectoryResolver();
+            if (!Directory.Exists(directory)) return;
+            var stamp = TimeOverride is { } clock ? DateTimeOffset.FromUnixTimeMilliseconds(clock()) : DateTimeOffset.UtcNow;
+            var safeRequest = string.Concat(requestId.Where(char.IsLetterOrDigit));
+            if (safeRequest.Length == 0) safeRequest = "challenge";
+            var sidecar = Path.Combine(directory, $"{stamp:yyyyMMdd-HHmmssfff}-{pid}-{safeRequest}.outcome.txt");
+            File.WriteAllText(sidecar, $"{stamp:O} pid={pid} challenge={requestId} outcome={(success ? "accepted" : "rejected")}" + (message.Length > 0 ? " message=" + message : "") + Environment.NewLine);
+            PruneSamples(directory);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Diagnostics.TryLog("captcha-solver", $"pid {pid}: challenge outcome could not be recorded ({e.GetType().Name})");
+        }
+    }
+
+    private static void PruneSamples(string directory)
+    {
+        try
+        {
+            var files = new DirectoryInfo(directory).GetFiles().OrderBy(f => f.CreationTimeUtc).ToArray();
+            for (var index = 0; index < files.Length - MaximumSampleFiles; index++) files[index].Delete();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+    }
 
     public string Describe() =>
         !enabled ? "Auto-resolve is not configured: the solver key is missing."
@@ -165,6 +238,7 @@ public sealed class CaptchaAutoSolver : IDisposable
         }
         pending.TryAdd(requestId, 0);
         SetEvent($"Challenge {requestId} received; solving…");
+        SaveChallengeSample(pid, requestId, imageBase64, mimeType);
         string answer = "";
         string error = "";
         try
@@ -187,10 +261,15 @@ public sealed class CaptchaAutoSolver : IDisposable
         pending.TryRemove(requestId, out _);
         try
         {
+            // A human needs a moment to read the challenge; a random pause before answering
+            // keeps the response time from looking machine-generated.
+            var delay = minimumAnswerDelayMs == maximumAnswerDelayMs ? minimumAnswerDelayMs
+                : Random.Shared.Next(minimumAnswerDelayMs, maximumAnswerDelayMs + 1);
+            if (delay > 0) await Task.Delay(delay);
             var command = new { requestId, answer, error, forceLogout = false };
             if (SubmitOverride is { } submit) await submit(pid, "SubmitCaptchaAnswer", command);
             else await manager.SendCommandAsync(pid, "SubmitCaptchaAnswer", command);
-            Diagnostics.TryLog("captcha-solver", $"pid {pid}: challenge {requestId} answered (error={(error.Length == 0 ? "none" : error)})");
+            Diagnostics.TryLog("captcha-solver", $"pid {pid}: challenge {requestId} answered{(error.Length == 0 ? "" : " with issue " + error)}");
             if (error.Length == 0)
                 SetEvent($"Challenge {requestId}: answer submitted; waiting for the game's result.");
         }
@@ -205,6 +284,7 @@ public sealed class CaptchaAutoSolver : IDisposable
     internal void OnOutcome(int pid, string requestId, bool success, string message)
     {
         if (string.IsNullOrWhiteSpace(requestId)) return;
+        SaveOutcomeSample(pid, requestId, success, message);
         if (success)
         {
             solved++;
@@ -223,6 +303,11 @@ public sealed class CaptchaAutoSolver : IDisposable
     {
         lastEvent = text;
         lastEventAt = DateTimeOffset.UtcNow;
+        lock (historyLock)
+        {
+            history.Add((lastEventAt.Value, text));
+            if (history.Count > 50) history.RemoveRange(0, history.Count - 50);
+        }
     }
 
     public event Action? Changed;

@@ -450,7 +450,7 @@ public sealed class MainWindow : Window
   var auto=Section(root,"Auto-resolve","When the game shows a CAPTCHA challenge, Hexor solves it and submits the answer automatically. Nothing for you to run or watch.");
   var autoStatus=Text("",13,true,"#DCC8FF");autoStatus.Name="CaptchaAutoStatusText";autoStatus.SetBinding(TextBlock.TextProperty,nameof(MainViewModel.CaptchaAutoStatus));AutomationProperties.SetLiveSetting(autoStatus,AutomationLiveSetting.Polite);auto.Children.Add(autoStatus);
 
-  var status=Section(root,"Activity log","What the challenge monitor has seen while Hexor was open.");
+  var status=Section(root,"Activity log","Every challenge, answer and result while Hexor is open — newest first. Challenge images are archived in the CaptchaSamples folder for review.");
   var summary=Text("",12,false,"#B9ADCA");summary.Name="CaptchaRecordsSummary";summary.SetBinding(TextBlock.TextProperty,nameof(MainViewModel.CaptchaRecordsSummary));status.Children.Add(summary);
   var records=new ItemsControl{Name="CaptchaRecordList",FontSize=12,Foreground=Brush("#DCC8FF")};records.SetBinding(ItemsControl.ItemsSourceProperty,nameof(MainViewModel.CaptchaRecordLines));status.Children.Add(records);
 
@@ -462,7 +462,7 @@ public sealed class MainWindow : Window
   alerts.Children.Add(Text("When enabled, Hexor waits for confirmation after the active signal ends. Check the game before choosing Confirm apply resume.",12,false,"#B9ADCA"));
   alerts.Children.Add(Button("Confirm apply resume",()=>Model.ConfirmChallengeResume()));
 
-  var visual=Section(root,"Visual challenge monitor","Optional extra layer: watches the game window for challenge overlays and notifies you.");
+  var visual=Section(root,"Visual template monitor (optional)","A separate, optional layer that watches the game window for challenge overlays. The auto-resolver does not need it — leave this unconfigured unless you want overlay alerts.");
   Check(visual,"Enable Visual Detection","VisualDetectionEnabled");
   Check(visual,"Enable Notification Sound","VisualDetectionSound");
   var sensitivityRow=new Grid{Margin=new Thickness(0,4,0,0)};sensitivityRow.ColumnDefinitions.Add(new());sensitivityRow.ColumnDefinitions.Add(new(){Width=new GridLength(180)});

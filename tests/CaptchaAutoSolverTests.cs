@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Hexor.Runtime;
+using System.IO;
 
 internal static class CaptchaAutoSolverTests
 {
@@ -7,6 +8,7 @@ internal static class CaptchaAutoSolverTests
     {
         Payloads(check);
         SolverFlow(check).GetAwaiter().GetResult();
+        DelayAndSamples(check).GetAwaiter().GetResult();
         Disabled(check);
     }
 
@@ -38,7 +40,7 @@ internal static class CaptchaAutoSolverTests
         {
             solveCalls++;
             return Task.FromResult("4242");
-        }, keyOverride: "test-key")
+        }, keyOverride: "test-key", 0, 0)
         {
             SubmitOverride = (pid, command, args) =>
             {
@@ -76,9 +78,11 @@ internal static class CaptchaAutoSolverTests
         solver.OnOutcome(4242, "req-2", success: false, "wrong answer");
         check(solver.Rejected == 1 && solver.Describe().Contains("rejected by the game: wrong answer", StringComparison.Ordinal),
             "Rejected verdicts surface the game's message");
+        check(solver.History.Any(h => h.Text.Contains("accepted by the game", StringComparison.Ordinal)),
+            "The solver keeps an activity history for the challenge log");
 
         // Solver failure still delivers a response so the game is not left waiting forever.
-        using var failing = new CaptchaAutoSolver(manager, (_, _) => throw new InvalidOperationException("boom"), keyOverride: "k")
+        using var failing = new CaptchaAutoSolver(manager, (_, _) => throw new InvalidOperationException("boom"), keyOverride: "k", 0, 0)
         {
             SubmitOverride = (_, _, _) => Task.CompletedTask,
         };
@@ -86,6 +90,42 @@ internal static class CaptchaAutoSolverTests
         for (var i = 0; i < 50; i++) await Task.Delay(100);
         check(failing.Failed == 1 && failing.Describe().Contains("could not be solved: boom", StringComparison.Ordinal),
             "Solver failures are counted and described to the operator");
+    }
+
+    private static async Task DelayAndSamples(Action<bool, string> check)
+    {
+        using var manager = new GameIpcManager();
+        var sampleDirectory = Path.Combine(Path.GetTempPath(), "CaptchaSamples-" + Guid.NewGuid().ToString("N"));
+        CaptchaAutoSolver.SampleDirectoryResolver = () => sampleDirectory;
+        try
+        {
+            DateTimeOffset? solvedAt = null, submittedAt = null;
+            (int pid, string command, object? args)? submitted = null;
+            using var solver = new CaptchaAutoSolver(manager, (_, _) =>
+            {
+                solvedAt = DateTimeOffset.UtcNow;
+                return Task.FromResult("77");
+            }, keyOverride: "k", 250, 450)
+            {
+                SubmitOverride = (pid, command, args) => { submittedAt = DateTimeOffset.UtcNow; submitted = (pid, command, args); return Task.CompletedTask; },
+            };
+            solver.OnChallenge(777, "req-d-1", Convert.ToBase64String([1, 2, 3, 4]), "image/png");
+            for (var i = 0; i < 100 && submitted == null; i++) await Task.Delay(50);
+            var elapsed = (submittedAt ?? solvedAt ?? DateTimeOffset.UtcNow) - (solvedAt ?? DateTimeOffset.UtcNow);
+            check(submitted != null && elapsed.TotalMilliseconds >= 200,
+                $"Answers wait a randomized delay before submission (measured {elapsed.TotalMilliseconds:0}ms)");
+            var files = Directory.GetFiles(sampleDirectory);
+            check(files.Any(f => f.EndsWith(".png", StringComparison.OrdinalIgnoreCase)),
+                "Challenge images are archived as PNG samples");
+            check(files.Any(f => f.Contains("reqd1", StringComparison.OrdinalIgnoreCase)),
+                "Sample file names carry the challenge request id (sanitized)");
+            solver.OnOutcome(777, "req-d-1", success: false, "wrong answer");
+            for (var i = 0; i < 50; i++) await Task.Delay(50);
+            var outcomeFiles = Directory.GetFiles(sampleDirectory).Where(f => f.EndsWith(".outcome.txt", StringComparison.OrdinalIgnoreCase)).ToArray();
+            check(outcomeFiles.Length == 1 && File.ReadAllText(outcomeFiles[0]).Contains("outcome=rejected"),
+                "Rejected outcomes are recorded next to the sample image");
+        }
+        finally { CaptchaAutoSolver.SampleDirectoryResolver = () => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Hexor", "ControlCenter", "CaptchaSamples"); }
     }
 
     private static void Disabled(Action<bool, string> check)
