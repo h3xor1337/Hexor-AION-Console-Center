@@ -41,6 +41,20 @@ public static class LegionCommanderRegistrySchema
         Bool("Enhance", "AutoOdMorphEnabled", "Auto Dungeon / Od Morph"),
         Number("Enhance", "AutoUpgradeMaxBattlePowerK", 100, 1, 100, "Character Enhancement / Maximum battle power"),
         Bool("Enhance", "DestroyInsteadOfExtract", "Equipment Extraction / Destroy instead of extracting"),
+        // Coin-shop and remaining Enhance booleans must exist for customers who never opened the
+        // vendor console: when a value is missing the game falls back to its own default, which
+        // keeps purchases running even though every toggle shows disabled.
+        Bool("Enhance", "EnchantBoundKinahOnly", "Enchant using bound Kinah only"),
+        Bool("Enhance", "GenusInsightAutoAnalyze", "Genus Insight / Automatically analyze"),
+        Bool("Enhance", "CoinShopNightmareDaevanion", "Shop Exchange / Buy Daevanion items with Nightmare coins"),
+        Bool("Enhance", "CoinShopNightmareStigma", "Shop Exchange / Buy Stigma items with Nightmare coins"),
+        Bool("Enhance", "CoinShopFestivalDaevanion", "Shop Exchange / Buy Daevanion items with Festival coins"),
+        Bool("Enhance", "CoinShopFestivalStigma", "Shop Exchange / Buy Stigma items with Festival coins"),
+        Bool("Enhance", "CoinShopAbyssStigma", "Shop Exchange / Buy Stigma items with Abyss coins"),
+        Bool("ResourceGrab", "AutoDungeonUrugugu", "Auto Dungeon / Prefer Urugugu"),
+        Bool("ResourceGrab", "GatherIgnoreAether", "Resource Gathering / Ignore Aether"),
+        Bool("ResourceGrab", "GatherQualityFilterEnabled", "Resource Gathering / Quality filter"),
+        Number("ResourceGrab", "GatherQualityFilterLevel", 1, 1, 99, "Resource Gathering / Quality filter level"),
         Bool("MiniGame", "AutoEnter", "Mini Games / Auto Enter"),
         Bool("MiniGame", "UseTaiwanVillageRules", "Mini Games / Taiwan village rules"),
         Bool("ResourceGrab", "AutoEnterAbyss", "Resource Gathering / Enter Abyss"),

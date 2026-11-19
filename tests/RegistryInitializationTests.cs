@@ -31,6 +31,12 @@ internal static class RegistryInitializationTests
         check(registry.Read("ResourceGrab", "AuctionAutoSell") == 0 && registry.Read("ResourceGrab", "AuctionPriceMode") == 1,
             "Missing auction settings default to OFF and Average");
         check(registry.Read("Enhance", "DestroyInsteadOfExtract") == 0, "Fresh customer installation creates Equipment Extraction as DWORD OFF");
+        check(new[]{ "CoinShopNightmareDaevanion", "CoinShopNightmareStigma", "CoinShopFestivalDaevanion", "CoinShopFestivalStigma", "CoinShopAbyssStigma", "EnchantBoundKinahOnly", "GenusInsightAutoAnalyze" }.All(name => registry.Read("Enhance", name) == 0),
+            "Fresh installation creates every Shop Exchange and Enhance toggle as DWORD OFF so a customer who never opened the vendor console does not keep buying");
+        check(new[]{ "CoinShopNightmareDaevanion", "CoinShopNightmareStigma", "CoinShopFestivalDaevanion", "CoinShopFestivalStigma", "CoinShopAbyssStigma" }.All(name => Hexor.Compatibility.LegionSharedSettings.Mappings.Any(m => m.Group == "shop" && m.Group == "shop" && m.Section == "Enhance" && m.ValueName == name)),
+            "Every Shop Exchange purchase toggle is mapped into the shared shop document");
+        check(registry.Read("ResourceGrab", "GatherQualityFilterEnabled") == 0 && registry.Read("ResourceGrab", "GatherQualityFilterLevel") == 1 && registry.Read("ResourceGrab", "GatherIgnoreAether") == 0 && registry.Read("ResourceGrab", "AutoDungeonUrugugu") == 0,
+            "Missing gathering and dungeon preference values are created with safe defaults");
         check(registry.ReadAppliedSchemaVersion() == LegionCommanderRegistrySchema.Version, "Successful startup records the embedded schema version in Hexor-owned metadata");
 
         // Retired-feature push: a value a customer previously enabled is deleted on startup.

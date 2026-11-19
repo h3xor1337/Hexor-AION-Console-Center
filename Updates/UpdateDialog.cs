@@ -28,20 +28,30 @@ public sealed class UpdateAvailableDialog : Window
         this.beginUpdate = beginUpdate;
         Title = "Hexor Update Available"; Width = 610; SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterOwner; WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent;
-        var shell = new Border { Background = Brush("#161220"), BorderBrush = Brush("#6F45AC"), BorderThickness = new(1), CornerRadius = new(18), Padding = new(28) };
+        Title = "Hexor Update Available"; Width = 640; SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize;
+        WindowStartupLocation = WindowStartupLocation.CenterOwner; WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent;
+        // Elevation reads through layered shadow, not a heavier border; the border stays for structure.
+        var shell = new Border
+        {
+            Background = Brush("#161220"), BorderBrush = Brush("#6F45AC"), BorderThickness = new(1),
+            CornerRadius = new(18), Padding = new(32, 26, 32, 28),
+            Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 42, ShadowDepth = 10, Opacity = 0.45, Color = ((Color)ColorConverter.ConvertFromString("#0B0614")) },
+        };
         var root = new StackPanel(); shell.Child = root; Content = shell;
-        root.Children.Add(Text("HEXOR CONTROL CENTER", 11, true, "#A77BE6"));
-        root.Children.Add(Text("Hexor Update Available", 28, true, "#FFFFFF", new(0, 6, 0, 18)));
-        var versions = new Grid { Margin = new(0, 0, 0, 18) }; versions.ColumnDefinitions.Add(new()); versions.ColumnDefinitions.Add(new());
-        var installed = new StackPanel(); installed.Children.Add(Text("INSTALLED", 10, true, "#8F839F")); installed.Children.Add(Text(installedVersion, 18, true, "#F5F1FF")); versions.Children.Add(installed);
-        var available = new StackPanel(); available.Children.Add(Text("AVAILABLE", 10, true, "#8F839F")); available.Children.Add(Text(release.Version, 18, true, "#D8B8FF")); Grid.SetColumn(available, 1); versions.Children.Add(available); root.Children.Add(versions);
-        root.Children.Add(Text("WHAT'S NEW", 10, true, "#8F839F"));
+        root.Children.Add(Text("HEXOR CONTROL CENTER", 11, true, "#B08CE8", new(0, 0, 0, 4)));
+        root.Children.Add(new TextBlock { Text = "Hexor Update Available", FontSize = 26, FontWeight = FontWeights.SemiBold, Foreground = Brush("#FFFFFF"), LineHeight = 31, Margin = new(0, 0, 0, 20) });
+        var versions = new Grid { Margin = new(0, 0, 0, 20) }; versions.ColumnDefinitions.Add(new()); versions.ColumnDefinitions.Add(new());
+        var installed = new StackPanel(); installed.Children.Add(Text("INSTALLED", 10, true, "#9C90B0")); installed.Children.Add(new TextBlock { Text = installedVersion, FontSize = 17, FontWeight = FontWeights.SemiBold, Foreground = Brush("#F5F1FF"), LineHeight = 23 }); versions.Children.Add(installed);
+        var available = new StackPanel(); available.Children.Add(Text("AVAILABLE", 10, true, "#9C90B0")); available.Children.Add(new TextBlock { Text = release.Version, FontSize = 17, FontWeight = FontWeights.SemiBold, Foreground = Brush("#D8B8FF"), LineHeight = 23 }); Grid.SetColumn(available, 1); versions.Children.Add(available); root.Children.Add(versions);
+        root.Children.Add(Text("WHAT'S NEW", 10, true, "#9C90B0", new(0, 0, 0, 2)));
         root.Children.Add(BuildReleaseNotes(release.ReleaseNotes));
         root.Children.Add(size); root.Children.Add(progress); root.Children.Add(stage); root.Children.Add(detail);
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new(0, 22, 0, 0) };
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new(0, 20, 0, 0) };
         updateNow.Name = "UpdateNowButton"; updateNow.IsDefault = true; later.Name = "UpdateLaterButton"; later.IsCancel = true;
         actions.Children.Add(later); actions.Children.Add(updateNow); root.Children.Add(actions);
         later.Click += (_, _) => Close(); updateNow.Click += async (_, _) => await StartUpdate();
+        // Keyboard entry point and a short, restrained enter motion (skipped when animations are off).
+        Loaded += (_, _) => { updateNow.Focus(); if (SystemParameters.ClientAreaAnimation) { var fade = new System.Windows.Media.Animation.DoubleAnimation(0, 1, System.Windows.Duration.Automatic) { Duration = TimeSpan.FromMilliseconds(150), EasingFunction = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut } }; var slide = new System.Windows.Media.Animation.ThicknessAnimation { From = new Thickness(0, 14, 0, 0), To = new Thickness(0), Duration = TimeSpan.FromMilliseconds(150), EasingFunction = fade.EasingFunction }; BeginAnimation(OpacityProperty, fade); shell.BeginAnimation(MarginProperty, slide); } };
     }
 
     // Changelog lines arrive as lightweight markdown ("#", "##", "- " bullets). Render them as a

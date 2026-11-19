@@ -55,9 +55,13 @@ internal static class LcRegistryFeatureTests
             check(!registry.ReadGathering().CanEdit, "Missing gathering values are readable without fabrication");
             using (var key = Registry.CurrentUser.OpenSubKey(branch)) check(key == null, "Gathering read does not create missing registry keys");
             using var model = new MainViewModel(new JsonConfigurationService(Path.Combine(root, "lc-features.json"), new SettingsBackupService()), registry);
-            check(LegionCommanderFeatureSettings.Booleans.All(f => !registry.Inspect(f.Section, f.Name).Exists)
-                && !registry.Inspect("ResourceGrab", "GatherQualityFilterLevel").Exists && !registry.ReadGathering().Targets.Exists,
-                "Startup never seeds new controls or resource lists from the sample export");
+            var templatePairs = RegistryDefaults.Template.Select(t => (t.Section, t.Name)).ToHashSet();
+            check(LegionCommanderFeatureSettings.Booleans.All(f => templatePairs.Contains((f.Section, f.Name)) == registry.Inspect(f.Section, f.Name).Exists),
+                "Startup seeds exactly the supported template values (purchase toggles default OFF) and never fabricates a control beyond the template");
+            check(new[]{ "CoinShopNightmareDaevanion", "CoinShopNightmareStigma", "CoinShopFestivalDaevanion", "CoinShopFestivalStigma", "CoinShopAbyssStigma" }.All(name => registry.Read("Enhance", name) == 0),
+                "Startup seeds every Shop Exchange purchase toggle as DWORD OFF so the game cannot keep buying on its own defaults");
+            check(!registry.ReadGathering().Targets.Exists,
+                "Startup never seeds resource lists from the sample export");
             foreach (var feature in LegionCommanderFeatureSettings.Booleans)
             {
                 var toggle = model.Toggles.Single(t => t.Section == feature.Section && t.Name == feature.Name);
