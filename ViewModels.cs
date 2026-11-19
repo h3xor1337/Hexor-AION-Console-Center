@@ -1,10 +1,40 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Hexor.Compatibility;
 using Hexor.Runtime;
 
 namespace Hexor;
+
+public sealed class DungeonPriorityRow : Observable
+{
+    private bool enabled;
+    public DungeonPriorityRow(MainViewModel model, int mapId, string label, bool initialEnabled)
+    {
+        Model = model; MapId = mapId; Label = label; enabled = initialEnabled;
+        MoveUp = new RelayCommand(() => model.MoveDungeonPriority(MapId, -1), () => model.CanMoveDungeonPriority(MapId, -1));
+        MoveDown = new RelayCommand(() => model.MoveDungeonPriority(MapId, 1), () => model.CanMoveDungeonPriority(MapId, 1));
+    }
+    private MainViewModel Model { get; }
+    public int MapId { get; }
+    public string Label { get; }
+    public int Ordinal { get; internal set; }
+    public bool Enabled
+    {
+        get => enabled;
+        set
+        {
+            if (value == enabled) return;
+            enabled = value;
+            Changed(nameof(Enabled));
+            Model.SaveDungeonPriority();
+        }
+    }
+    public System.Windows.Input.ICommand MoveUp { get; }
+    public System.Windows.Input.ICommand MoveDown { get; }
+}
 
 public sealed class RegistryToggle : Observable
 {
@@ -78,6 +108,7 @@ public sealed class MainViewModel : Observable, IDisposable
     public bool CanControlAutomation => false;
     public IJsonConfigurationService Json { get; }
     public IRegistrySettingsService Registry { get; }
+    public GatheringSettingsViewModel Gathering { get; }
     public Preferences Preferences { get; }
     public ObservableCollection<RegistryToggle> Toggles { get; } = [];
     private int auctionPriceMode = -1;
@@ -93,16 +124,86 @@ public sealed class MainViewModel : Observable, IDisposable
         }
     }
     private int abyssLayer = -1;
-    private int preferredDungeon = -1;
+    private int dungeonMode = -1;
     public int AbyssLayer
     {
         get => abyssLayer;
         set { if (value is 0 or 1 && value != abyssLayer) SaveResourceChoice("AbyssLayer", value == 0 ? 21 : 23); }
     }
-    public int PreferredDungeon
+    public int DungeonMode
     {
-        get => preferredDungeon;
-        set { if (value is 0 or 1 && value != preferredDungeon) SaveResourceChoice("AutoDungeonPreferred", value); }
+        get => dungeonMode;
+        set { if (value is 0 or 1 && value != dungeonMode) SaveResourceChoice("AutoDungeonMode", value); }
+    }
+    public ObservableCollection<DungeonPriorityRow> DungeonPriority { get; } = [];
+    public void ReloadDungeonPriority()
+    {
+        var previous = DungeonPriority.ToDictionary(r => r.MapId, r => r.Enabled);
+        DungeonPriority.Clear();
+        DungeonRegistrySnapshot snapshot;
+        try { snapshot = Registry.ReadDungeon(); }
+        catch (Exception e) { Status = "Dungeon settings unavailable (" + e.GetType().Name + ")."; return; }
+        var parsed = snapshot.Priority.Value is string text && snapshot.Priority.Supported ? DungeonCatalog.Parse(text)
+            : snapshot.Mode.Value is int mode && snapshot.Mode.Exists && mode is 0 or 1 ? Registry.DungeonDefaults().ToList()
+            : [];
+        if (snapshot.Priority.Value is null && parsed.Count > 0)
+        {
+            // Vendor default seed: the Uruguru Cave entry follows the saved legacyUrugugu toggle.
+            var urugugu = snapshot.LegacyUrugugu.Value == 1;
+            parsed = parsed.Select(e => e.MapId == 600012 ? (e.MapId, urugugu) : e).ToList();
+        }
+        foreach (var (mapId, enabled) in parsed)
+        {
+            var row = new DungeonPriorityRow(this, mapId, DungeonCatalog.Label(mapId),
+                previous.TryGetValue(mapId, out var priorEnabled) ? priorEnabled : enabled);
+            row.Ordinal = DungeonPriority.Count + 1;
+            DungeonPriority.Add(row);
+        }
+        dungeonMode = snapshot.Mode.Value is int value && snapshot.Mode.Supported && value is 0 or 1 ? value : -1;
+        Changed(nameof(DungeonMode));
+    }
+
+    public void ResetDungeonPriority()
+    {
+        try
+        {
+            var urugugu = Registry.Read("ResourceGrab", "AutoDungeonUrugugu") == 1;
+            Registry.WriteDungeonPriorityVerified([.. Registry.DungeonDefaults().Select(entry => entry.MapId == 600012 ? (entry.MapId, urugugu) : entry)]);
+            Status = "Dungeon priority reset to the vendor default.";
+        }
+        catch (Exception e) { Status = "Could not reset dungeon priority (" + e.GetType().Name + ")."; }
+        ReloadDungeonPriority();
+    }
+    public void SaveDungeonPriority()
+    {
+        try
+        {
+            Registry.WriteDungeonPriorityVerified([.. DungeonPriority.Select(r => (r.MapId, Enabled: r.Enabled))]);
+            Status = "Dungeon priority saved and verified.";
+        }
+        catch (Exception e) { Status = "Could not save dungeon priority (" + e.GetType().Name + ")."; }
+        ReloadDungeonPriority();
+    }
+    private int DungeonIndex(int mapId)
+    {
+        for (var index = 0; index < DungeonPriority.Count; index++)
+            if (DungeonPriority[index].MapId == mapId) return index;
+        return -1;
+    }
+    public bool CanMoveDungeonPriority(int mapId, int direction)
+    {
+        var index = DungeonIndex(mapId);
+        if (index < 0) return false;
+        var target = index + direction;
+        return target >= 0 && target < DungeonPriority.Count;
+    }
+    public void MoveDungeonPriority(int mapId, int direction)
+    {
+        var index = DungeonIndex(mapId);
+        var target = index + direction;
+        if (index < 0 || target < 0 || target >= DungeonPriority.Count) return;
+        DungeonPriority.Move(index, target);
+        SaveDungeonPriority();
     }
     private void SaveResourceChoice(string name, int value)
     {
@@ -116,14 +217,15 @@ public sealed class MainViewModel : Observable, IDisposable
         {
             auctionPriceMode = Registry.Read("ResourceGrab", "AuctionPriceMode") switch { 0 => 0, 1 => 1, _ => -1 };
             abyssLayer = Registry.Read("ResourceGrab", "AbyssLayer") switch { 21 => 0, 23 => 1, _ => -1 };
-            preferredDungeon = Registry.Read("ResourceGrab", "AutoDungeonPreferred") switch { 0 => 0, 1 => 1, _ => -1 };
+            dungeonMode = Registry.Read("ResourceGrab", "AutoDungeonMode") switch { 0 => 0, 1 => 1, _ => -1 };
         }
         catch (Exception e)
         {
-            auctionPriceMode = abyssLayer = preferredDungeon = -1;
+            auctionPriceMode = abyssLayer = dungeonMode = -1;
             Status = "Resource settings unavailable (" + e.GetType().Name + ")";
         }
-        Changed(nameof(AuctionPriceMode)); Changed(nameof(AbyssLayer)); Changed(nameof(PreferredDungeon));
+        Changed(nameof(AuctionPriceMode)); Changed(nameof(AbyssLayer)); Changed(nameof(DungeonMode));
+        ReloadDungeonPriority();
     }
     public ObservableCollection<ConfigurationCandidate> Candidates { get; } = [];
     private readonly bool automaticDiscovery;
@@ -149,11 +251,12 @@ public sealed class MainViewModel : Observable, IDisposable
             return text;
         }
     }
-    public string ConfigurationDetails => inspection == null ? resolution?.Note ?? "Select a LegionCommander data root or its config folder."
+    public string ConfigurationDetails => inspection == null ? resolution?.Note ?? "Select the game data root or its config folder."
         : inspection.DataRoot + Environment.NewLine + inspection.FileAvailability + Environment.NewLine + inspection.Association(Detection)
             + (resolution == null ? "" : Environment.NewLine + resolution.Note);
     public string DiagnosticsProcess => Detection.Processes.Count == 0 ? "No AION2 process observed."
-        : string.Join(Environment.NewLine, Detection.Processes.Select(p => $"PID {p.Id} • {p.ExecutablePath ?? "Executable path inaccessible"}"));
+        : string.Join(Environment.NewLine, Detection.Processes.Select(p => $"PID {p.Id} • {p.ExecutablePath ?? "Executable path inaccessible"}"
+            + (p.Launcher is { } launcher ? $" • {launcher}" : "")));
     public string DiagnosticsDataRoot => inspection?.DataRoot ?? "Not resolved; choose a data/config folder.";
     public string DiagnosticsFiles => inspection?.FileAvailability ?? "No selected root. No files were created.";
     public string DiagnosticsAssociation => inspection?.Association(Detection) ?? "No selected configuration to associate.";
@@ -238,7 +341,7 @@ public sealed class MainViewModel : Observable, IDisposable
     public string WorkflowNotice => session?.Document.NeedsWorkflowMigration == true
         ? "Legacy workflow shown using verified migration rules. Apply explicitly to migrate; disk is unchanged."
         : "Saving preserves ordinary duplicates and IDs, and keeps one enabled Switch Character step last.";
-    private string status = "Ready. Reads do not change LegionCommander settings.";
+    private string status = "Ready.";
     public string Status { get => status; set { if(Set(ref status, value)) Changed(nameof(CustomerStatus)); } }
     private string updateStatus = "Installation ready.";
     public string UpdateStatus { get => updateStatus; private set => Set(ref updateStatus, value); }
@@ -279,8 +382,40 @@ public sealed class MainViewModel : Observable, IDisposable
     public string CurrentUpgradeMaxBattlePowerK { get; private set; } = "Default 100K (not written)";
     public string RawClass { get; private set; } = "Unknown";
     public string RawRace { get; private set; } = "Unknown";
+    public int? AutoTaskRace => ReadCharacterDefault("CharacterRace");
+    public int? AutoTaskJob => ReadCharacterDefault("CharacterJob");
+
+    private int? ReadCharacterDefault(string key)
+    {
+        if (!OriginalConfigurationReady) return null;
+        var stored = key == "CharacterRace" ? RawRace : RawClass;
+        if (int.TryParse(stored, out int number)) return number;
+        if (stored == "Default 2") return 2;
+        if (stored == "Default 1") return 1;
+        return null;
+    }
+
+    public void SaveCharacterDefault(string key, int value)
+    {
+        if (!OriginalConfigurationReady) { Status = "Select a configuration first."; return; }
+        try
+        {
+            session!.SaveAutoTaskNumber(key, value);
+            ReloadRegistry();
+            Status = "Character default saved and verified.";
+        }
+        catch (PartialSettingsWriteException e)
+        {
+            ReloadRegistry();
+            ReportSaveFailure(e);
+        }
+        catch (Exception e) { ReportSaveFailure(e); }
+    }
+
     public string RegistryCharacterRace { get; private set; } = "Missing";
     public string RegistryCharacterJob { get; private set; } = "Missing";
+    public string WorkflowEditorStatus { get; private set; } = "";
+    public string ScheduleEditorStatus { get; private set; } = "";
     public RelayCommand SaveDailyCommand { get; }
     public RelayCommand SaveScheduleCommand { get; }
     public RelayCommand AddCommand { get; }
@@ -289,17 +424,366 @@ public sealed class MainViewModel : Observable, IDisposable
     public RelayCommand UpCommand { get; }
     public RelayCommand DownCommand { get; }
     private readonly CancellationTokenSource lifetime = new();
+    private readonly CaptchaMonitor captchaMonitor;
+    private CaptchaSnapshot captchaSnapshot = new(CaptchaPhase.Idle, null, null, "No challenge has appeared yet. Auto-resolve is watching.", "");
+    private string captchaStatusText = "CAPTCHA monitoring starting";
+    private string captchaDiagnostics = "CAPTCHA monitor has not observed provider signals yet.";
+    private bool pollingCaptcha;
+    public string CaptchaStatusText { get => captchaStatusText; private set => Set(ref captchaStatusText, value); }
+    public string CaptchaDiagnostics { get => captchaDiagnostics; private set => Set(ref captchaDiagnostics, value); }
+    public bool CaptchaChallengeActive => captchaSnapshot.ChallengeActive;
+    public IReadOnlyList<string> CaptchaRecordLines { get; private set; } = [];
+    public string CaptchaRecordsSummary => CaptchaRecordLines.Count == 0
+        ? "No CAPTCHA status changes observed since Hexor started."
+        : "Latest status changes observed since Hexor started.";
+    // Pause hold for Hexor's own apply actions. Hexor never pauses or controls the running
+    // automation: only Hexor's own provider-setting applies (workflow/schedule) are held while a
+    // challenge signal is active, and — when CaptchaResumeConfirmation is enabled — until the
+    // customer confirms resumption after the active signal ends.
+    private bool challengeResumePending;
+    private bool challengePauseArmed;
+    public bool ChallengeResumePending => challengeResumePending;
+    private bool VisualChallengeActive => Preferences.VisualDetectionEnabled && visualSnapshot.ChallengeActive;
+    private bool ChallengeSignalActive => captchaSnapshot.ChallengeActive || VisualChallengeActive;
+    private bool ChallengePauseBlocking => ChallengeSignalActive || challengeResumePending;
+    private string ChallengePauseMessage => ChallengeSignalActive
+        ? "CAPTCHA detected — apply is paused while the challenge signal is active. Complete or confirm the challenge, then apply again."
+        : "Apply resumption is waiting for your confirmation. Check the game, then choose Confirm apply resume.";
+    public void ConfirmChallengeResume()
+    {
+        if (!challengeResumePending) { Status = "No apply resumption is waiting for confirmation."; return; }
+        challengeResumePending = false;
+        Changed(nameof(ChallengeResumePending));
+        Status = "Apply resumption confirmed in Hexor. Automation was never paused or controlled by Hexor.";
+    }
+    private void UpdateChallengePauseState()
+    {
+        var previousPending = challengeResumePending;
+        if (ChallengeSignalActive)
+        {
+            challengeResumePending = false;
+            challengePauseArmed = true;
+        }
+        else if (challengePauseArmed)
+        {
+            challengePauseArmed = false;
+            if (CaptchaResumeConfirmation) challengeResumePending = true;
+        }
+        else if (challengeResumePending && !CaptchaResumeConfirmation) challengeResumePending = false;
+        if (previousPending != challengeResumePending) Changed(nameof(ChallengeResumePending));
+    }
+
+    private readonly VisualChallengeMonitor visualMonitor;
+    private VisualMonitorSnapshot visualSnapshot = new(VisualMonitorPhase.Idle, null, null, null, "Visual monitoring has not run yet.", 0, 0, []);
+    private string visualStatusText = "Visual monitoring starting";
+    private string visualDetail = "";
+    private bool pollingVisual;
+    public string VisualMonitorStatusText { get => visualStatusText; private set => Set(ref visualStatusText, value); }
+    public string VisualMonitorDetail { get => visualDetail; private set => Set(ref visualDetail, value); }
+    public VisualMonitorSnapshot VisualSnapshot => visualSnapshot;
+
+    // Live session controls and record reads over the installed LegionCommander runtime bridge.
+    // Hexor observes state and issues only explicit operator-initiated controls (pause/continue/stop
+    // of a running session, incident resolution, record reads). Hexor never starts automation, never
+    // touches game memory, and never adds, edits, or logs in game accounts.
+    private readonly IRuntimeMcpClient runtimeMcp = new RuntimeMcpClient();
+    // Hexor connects to the game session itself, so live status does not depend on
+    // LegionCommander running. The bridge stays optional (controller records when it is open).
+    private readonly GameIpcManager gameIpc = new();
+    private readonly CaptchaAutoSolver captchaSolver;
+    private string liveBridgeStatus = "Optional controller bridge not probed yet.";
+    private string captchaAutoStatus = "Auto-resolve is starting…";
+    private string liveGameStatus = "Game connection not checked yet. Refresh live status to check.";
+    private IReadOnlyList<RuntimeSessionRow> liveSessionRows = [];
+    private IReadOnlyList<RuntimeIncidentRow> liveIncidentRows = [];
+    private IReadOnlyList<string> liveDailyRecords = [];
+    private string liveDailyRecordsStatus = "Enter a game day (YYYY-MM-DD) and load records for one session account.";
+    private IReadOnlyList<string> liveCaptchaRows = [];
+    private string liveCaptchaStatus = "CAPTCHA activity is listed after a live refresh when a controller session is connected.";
+    private bool refreshingLive;
+    public string LiveBridgeStatus { get => liveBridgeStatus; private set => Set(ref liveBridgeStatus, value); }
+    public string LiveGameStatus { get => liveGameStatus; private set => Set(ref liveGameStatus, value); }
+    public string CaptchaAutoStatus { get => captchaAutoStatus; private set => Set(ref captchaAutoStatus, value); }
+    public IReadOnlyList<RuntimeSessionRow> LiveSessionRows { get => liveSessionRows; private set => Set(ref liveSessionRows, value); }
+    public IReadOnlyList<RuntimeIncidentRow> LiveIncidentRows { get => liveIncidentRows; private set => Set(ref liveIncidentRows, value); }
+    public IReadOnlyList<string> LiveDailyRecords { get => liveDailyRecords; private set => Set(ref liveDailyRecords, value); }
+    public string LiveDailyRecordsStatus { get => liveDailyRecordsStatus; private set => Set(ref liveDailyRecordsStatus, value); }
+    public IReadOnlyList<string> LiveCaptchaRows { get => liveCaptchaRows; private set => Set(ref liveCaptchaRows, value); }
+    public string LiveCaptchaStatus { get => liveCaptchaStatus; private set => Set(ref liveCaptchaStatus, value); }
+    public IReadOnlyList<RuntimeSessionRow> LiveSessions => liveSessionRows;
+
+    public async Task RefreshLiveStatusAsync()
+    {
+        if (refreshingLive || lifetime.IsCancellationRequested) return;
+        refreshingLive = true;
+        try
+        {
+            LiveGameStatus = gameIpc.Describe();
+            RebuildLiveItems();
+            var available = await Task.Run(() => runtimeMcp.ProbeAsync(lifetime.Token), lifetime.Token);
+            if (!available)
+            {
+                LiveBridgeStatus = runtimeMcp.StatusDescription;
+                LiveSessionRows = [];
+                LiveIncidentRows = [];
+                LiveCaptchaRows = [];
+                liveCaptchaStatus = "No automation controller session is connected; nothing recorded yet.";
+                Changed(nameof(LiveCaptchaStatus));
+                RebuildLiveItems();
+                Diagnostics.Log("live-control", "refreshed; bridge unavailable; direct sessions only");
+                return;
+            }
+            var sessionsResult = await runtimeMcp.SendAsync("sessions.list", new { }, lifetime.Token);
+            if (!sessionsResult.Ok)
+            {
+                LiveBridgeStatus = "The optional controller bridge returned an error: " + sessionsResult.Error;
+                LiveSessionRows = [];
+            }
+            else
+            {
+                var rows = RuntimeMcpResponses.Sessions(sessionsResult.Payload);
+                LiveBridgeStatus = rows.Count == 0
+                    ? "Optional controller bridge is available. No controller sessions are connected."
+                    : $"Optional controller bridge is available. Controller sessions: {rows.Count}.";
+                LiveSessionRows = rows;
+            }
+            RebuildLiveItems();
+            var incidents = new List<RuntimeIncidentRow>();
+            foreach (var session in liveSessionRows)
+            {
+                var listResult = await runtimeMcp.SendAsync("automation.incidents.list", new
+                {
+                    accountId = session.AccountId,
+                    afterSequence = 0,
+                    status = "open",
+                    limit = 50,
+                }, lifetime.Token);
+                if (listResult.Ok) incidents.AddRange(RuntimeMcpResponses.Incidents(listResult.Payload));
+            }
+            LiveIncidentRows = incidents;
+            await LoadCaptchaOperationsFromSessionsAsync();
+            RebuildLiveItems();
+            Diagnostics.Log("live-control", $"refreshed; sessions={liveSessionRows.Count}; incidents={incidents.Count}");
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception e) { LiveBridgeStatus = "Optional controller bridge check failed (" + e.GetType().Name + ")."; Diagnostics.Log("live-control", "refresh-failed; type=" + e.GetType().Name); }
+        finally { refreshingLive = false; }
+    }
+
+    // Runs an explicit operator control on one session account. The pause/continue/stop operations
+    // are the vendor bridge's daily.control verbs; start is deliberately not exposed from Hexor.
+    public async Task DailyControlAsync(int accountId, string operation)
+    {
+        try
+        {
+            var result = await runtimeMcp.SendAsync("daily.control", new { accountId, operation }, lifetime.Token);
+            Status = result.Ok
+                ? $"Session control '{operation}' was accepted for account {accountId}."
+                : $"Session control '{operation}' was rejected: {result.Error}";
+        }
+        catch (Exception e) { Status = "Session control could not be sent (" + e.GetType().Name + ")."; }
+        await RefreshLiveStatusAsync();
+    }
+
+    // Claims and resolves one open incident with the operator's chosen outcome. Claim leases the
+    // incident to Hexor so concurrent resolvers cannot double-resolve it.
+    public async Task ResolveIncidentAsync(RuntimeIncidentRow incident, string outcome, string summary)
+    {
+        try
+        {
+            var claim = await runtimeMcp.SendAsync("automation.incidents.claim", new
+            {
+                accountId = incident.AccountId,
+                incidentId = incident.IncidentId,
+                claimant = "Hexor Control Center",
+                leaseMs = 60000,
+            }, lifetime.Token);
+            if (!claim.Ok) { Status = "Incident claim failed: " + claim.Error; return; }
+            string claimToken = claim.Payload.TryGetProperty("claimToken", out var tokenElement) && tokenElement.ValueKind == JsonValueKind.String
+                ? tokenElement.GetString() ?? "" : "";
+            var resolve = await runtimeMcp.SendAsync("automation.incidents.resolve", new
+            {
+                accountId = incident.AccountId,
+                incidentId = incident.IncidentId,
+                claimToken,
+                outcome,
+                summary,
+                resumeStateMachine = outcome != "close_only",
+            }, lifetime.Token);
+            Status = resolve.Ok
+                ? $"Incident {incident.IncidentId} resolved with outcome '{outcome}'."
+                : "Incident resolution failed: " + resolve.Error;
+        }
+        catch (Exception e) { Status = "Incident resolution could not be sent (" + e.GetType().Name + ")."; }
+        await RefreshLiveStatusAsync();
+    }
+
+    // daily.records uses the game's own day boundary (UTC+8) with the documented YYYY-MM-DD format.
+    public async Task LoadDailyRecordsAsync(int accountId, string gameDay, int? serverId = null)
+    {
+        try
+        {
+            var summary = await runtimeMcp.SendAsync("daily.records", new
+            {
+                accountId,
+                operation = "summary",
+                gameDay,
+                serverId,
+            }, lifetime.Token);
+            if (!summary.Ok)
+            {
+                LiveDailyRecords = [];
+                LiveDailyRecordsStatus = "Daily records could not be read: " + summary.Error;
+                return;
+            }
+            var rows = RuntimeMcpResponses.DailySummaries(summary.Payload);
+            LiveDailyRecords = rows.Select(row =>
+                $"#{row.AccountId} {row.GameDay} · {row.Summary}" + (row.Detail.Length > 0 ? " · " + row.Detail : "")).ToArray();
+            LiveDailyRecordsStatus = rows.Count == 0
+                ? $"No daily summaries are recorded for account {accountId} on {gameDay}."
+                : $"Daily summaries for account {accountId} on {gameDay}: {rows.Count}.";
+        }
+        catch (Exception e) { LiveDailyRecordsStatus = "Daily records could not be read (" + e.GetType().Name + ")."; }
+        Changed(nameof(LiveDailyRecords)); Changed(nameof(LiveDailyRecordsStatus));
+    }
+
+    private string liveRecordsGameDay = "";
+    private string liveRecordsServerId = "";
+    public string LiveRecordsGameDay
+    {
+        get => liveRecordsGameDay;
+        set
+        {
+            if (Set(ref liveRecordsGameDay, value))
+            {
+                liveRecordsGameDayValid = System.Text.RegularExpressions.Regex.IsMatch(
+                    value.Trim(), @"^\d{4}-\d{2}-\d{2}$");
+                Changed(nameof(LiveRecordsGameDayValid));
+            }
+        }
+    }
+    private bool liveRecordsGameDayValid;
+    public bool LiveRecordsGameDayValid => liveRecordsGameDayValid;
+    public string LiveRecordsServerId { get => liveRecordsServerId; set => Set(ref liveRecordsServerId, value); }
+
+    public async Task LoadDailyRecordsForAsync(LiveSessionRowViewModel item)
+    {
+        int? serverId = int.TryParse(liveRecordsServerId.Trim(), out var parsed) ? parsed : null;
+        await LoadDailyRecordsAsync(item.Row.AccountId, liveRecordsGameDay.Trim(), serverId);
+    }
+
+    // Operator prompts (stop confirmation, incident resolution) are supplied by the window so the
+    // confirmation dialogs stay in the UI layer.
+    public Func<RuntimeSessionRow, bool>? LiveStopConfirmation { get; set; }
+    public Func<RuntimeIncidentRow, (string Outcome, string Summary)?>? LiveResolvePrompt { get; set; }
+
+    public IReadOnlyList<LiveSessionRowViewModel> LiveSessionItems { get; private set; } = [];
+    public IReadOnlyList<LiveIncidentRowViewModel> LiveIncidentItems { get; private set; } = [];
+
+    private void RebuildLiveItems()
+    {
+        var direct = gameIpc.Sessions().Where(s => s.ClientConnected)
+            .Select(s => new RuntimeSessionRow($"game-{s.ProcessId}", 0, s.ProcessId, s.ActivityState, true,
+                s.InGame ? "in game" : s.StatusSeen ? "connected" : "waiting", s.Level, s.MapId, Direct: true))
+            .ToArray();
+        var merged = direct.Concat(liveSessionRows.Where(b => direct.All(d => d.ProcessId != b.ProcessId))).ToArray();
+        LiveSessionItems = merged.Select(row => new LiveSessionRowViewModel(this, row)).ToArray();
+        LiveIncidentItems = liveIncidentRows.Select(row => new LiveIncidentRowViewModel(this, row)).ToArray();
+        Changed(nameof(LiveSessionItems)); Changed(nameof(LiveIncidentItems));
+    }
+
+    // Game IPC events arrive on background threads; rebuild the live UI on the dispatcher.
+    private void OnGameIpcChanged()
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher == null) { RebuildGameIpcUi(); return; }
+        if (dispatcher.CheckAccess()) RebuildGameIpcUi();
+        else _ = dispatcher.InvokeAsync(RebuildGameIpcUi);
+    }
+
+    private void RebuildGameIpcUi()
+    {
+        LiveGameStatus = gameIpc.Describe();
+        RebuildLiveItems();
+        UpdateCaptchaAutoStatus();
+    }
+
+    private void UpdateCaptchaAutoStatus()
+    {
+        var text = captchaSolver.Describe();
+        if (!gameIpc.Sessions().Any(s => s.ClientConnected && s.PipeOwnedByHexor))
+            text += "\nThe auto-resolve listens while a game session is connected.";
+        CaptchaAutoStatus = text;
+    }
+
+    // Direct game controls: stop the running automation or ask the client DLL for a fresh status.
+    public async Task GameStopAsync(int processId)
+    {
+        try
+        {
+            await gameIpc.SendCommandAsync(processId, "StopAll");
+            Status = $"Stop command sent to the game session on PID {processId}.";
+        }
+        catch (Exception e) { Status = $"Stop command for PID {processId} failed ({e.GetType().Name})."; }
+        RebuildGameIpcUi();
+    }
+
+    public async Task GameRefreshAsync(int processId)
+    {
+        try
+        {
+            await gameIpc.SendCommandAsync(processId, "RefreshCurrentStatus");
+            Status = $"Status refresh requested for PID {processId}.";
+        }
+        catch (Exception e) { Status = $"Status refresh for PID {processId} failed ({e.GetType().Name})."; }
+    }
+
+    private async Task LoadCaptchaOperationsFromSessionsAsync()
+    {
+        try
+        {
+            var lines = new List<string>();
+            foreach (var session in liveSessionRows)
+            {
+                var list = await runtimeMcp.SendAsync("captcha.operations.list", new
+                {
+                    accountId = session.AccountId,
+                    expectedRuntimeSessionId = session.RuntimeSessionId,
+                    expectedProcessId = session.ProcessId,
+                    limit = 20,
+                }, lifetime.Token);
+                if (!list.Ok) { lines.Add($"#{session.AccountId}: controller returned {list.Error}"); continue; }
+                var rows = RuntimeMcpResponses.CaptchaOperations(list.Payload);
+                if (rows.Count == 0) lines.Add($"#{session.AccountId}: no CAPTCHA operations recorded.");
+                else lines.AddRange(rows.Select(row => $"#{row.AccountId} {row.State}" + (row.Detail.Length > 0 ? " · " + row.Detail : "") + $" ({row.OperationId})"));
+            }
+            LiveCaptchaRows = lines;
+            liveCaptchaStatus = lines.Count == 0
+                ? "No CAPTCHA activity recorded by the connected controller sessions."
+                : $"CAPTCHA activity listed for {liveSessionRows.Count} session(s).";
+        }
+        catch (Exception e) { liveCaptchaStatus = "CAPTCHA operations could not be listed (" + e.GetType().Name + ")."; }
+        Changed(nameof(LiveCaptchaRows)); Changed(nameof(LiveCaptchaStatus));
+    }
 
     public MainViewModel(IJsonConfigurationService? json = null, IRegistrySettingsService? registry = null, ILegionConfigurationService? configuration = null,
         ICharacterDetectionService? runtimeDetector = null, IConfigurationInspector? configurationInspector = null,
-        Func<IReadOnlyList<string>>? configurationCandidates = null, VendorUpdaterManager? vendorUpdater = null)
+        Func<IReadOnlyList<string>>? configurationCandidates = null, VendorUpdaterManager? vendorUpdater = null, CaptchaMonitor? captchaMonitor = null, VisualChallengeMonitor? visualMonitor = null)
     {
         automaticDiscovery = json == null && registry == null || configurationCandidates != null;
         this.runtimeDetector = runtimeDetector ?? new CharacterDetectionService(new GameInstallationDiscoveryService());
         this.vendorUpdater = vendorUpdater ?? new VendorUpdaterManager();
+        this.captchaMonitor = captchaMonitor ?? new CaptchaMonitor();
+        this.visualMonitor = visualMonitor ?? new VisualChallengeMonitor(new WindowsGameWindowSource(), new PrintWindowFrameSource());
         this.configurationInspector = configurationInspector ?? new ConfigurationInspector();
+        gameIpc.Changed += OnGameIpcChanged;
+        gameIpc.Start();
+        captchaSolver = new CaptchaAutoSolver(gameIpc);
+        captchaSolver.Changed += () => OnGameIpcChanged();
+        UpdateCaptchaAutoStatus();
         Json = json ?? new JsonConfigurationService(Path.Combine(Diagnostics.Root, "preferences.json"), new SettingsBackupService());
         Registry = registry ?? new RegistrySettingsService();
+        Gathering = new(Registry, message => Status = message);
         try
         {
             Preferences = Json.Load();
@@ -336,7 +820,16 @@ public sealed class MainViewModel : Observable, IDisposable
         AddToggle("ResourceGrab", "AbyssCounterAttack", "Attack Nearby Players", null);
         AddToggle("ResourceGrab", "GuardianLogoutAvoidance", "Avoid Captcha System by Logging out/in", null);
         AddToggle("ResourceGrab", "AuctionAutoSell", "Automatically sell at auction", null);
-        SaveDailyCommand = new(SaveDaily); SaveScheduleCommand = new(SaveSchedule);
+        foreach (var feature in LegionCommanderFeatureSettings.Booleans)
+            AddToggle(feature.Section, feature.Name, feature.Label, false);
+        SelectedInstruction = Preferences.Instructions.FirstOrDefault();
+        SaveDailyCommand = new(() => { SaveDaily(); ReportWorkflowEditorStatus(); });
+        SaveScheduleCommand = new(() =>
+        {
+            SaveSchedule();
+            ScheduleEditorStatus = Status;
+            Changed(nameof(ScheduleEditorStatus));
+        });
         AddCommand = new(() => { var step = new Instruction(); Preferences.Instructions.Add(step); SelectedInstruction = step; });
         DuplicateCommand = new(() => { if (SelectedInstruction is { } i) { var copy = i.Copy(); Preferences.Instructions.Insert(Preferences.Instructions.IndexOf(i) + 1, copy); SelectedInstruction = copy; } }, () => SelectedInstruction != null);
         DeleteCommand = new(() => { if (SelectedInstruction is { } i) { Preferences.Instructions.Remove(i); SelectedInstruction = Preferences.Instructions.FirstOrDefault(); } }, () => SelectedInstruction != null);
@@ -424,6 +917,7 @@ public sealed class MainViewModel : Observable, IDisposable
     public void ReloadRegistry()
     {
         foreach (var toggle in Toggles) toggle.Reload();
+        Gathering.Reload();
         ReloadResourceSettings();
         Changed(nameof(DiagnosticsSettingDetails));
         try
@@ -467,6 +961,75 @@ public sealed class MainViewModel : Observable, IDisposable
         catch (Exception e) { Status = "Maximum battle power was not saved (" + e.GetType().Name + ")."; }
     }
     public bool Save() { try { Json.Save(Preferences); Status = "Saved to Hexor configuration."; return true; } catch (Exception e) { Status = "Could not save preferences (" + e.GetType().Name + ")."; return false; } }
+    private void ReportWorkflowEditorStatus()
+    {
+        WorkflowEditorStatus = Status;
+        Changed(nameof(WorkflowEditorStatus));
+    }
+
+    public void LoadDefaultWorkflow()
+    {
+        LoadPlan(WorkflowPlan.Default());
+        Changed(nameof(Preferences));
+        Status = "Default sequence loaded into the draft. Apply to save it.";
+        ReportWorkflowEditorStatus();
+    }
+
+    public void ImportWorkflow(string path)
+    {
+        try
+        {
+            using var input = File.OpenRead(path);
+            if (input.Length > 4_000_000) throw new InvalidDataException("Workflow file exceeds the supported size.");
+            if (input.ReadByte() != 0xef || input.ReadByte() != 0xbb || input.ReadByte() != 0xbf) input.Position = 0;
+            using var parsed = JsonDocument.Parse(input);
+            LegionConfigurationService.RejectDuplicateProperties(parsed.RootElement);
+            if (JsonNode.Parse(parsed.RootElement.GetRawText()) is not JsonObject document ||
+                (document.ContainsKey("Workflow") && document["Workflow"] is not JsonObject))
+                throw new InvalidDataException("Choose a workflow JSON file or a settings export.");
+            LoadPlan(WorkflowPlan.Read(document["Workflow"] as JsonObject ?? document).Normalize());
+            Changed(nameof(Preferences));
+            Status = "Workflow loaded into the draft. Apply to save it.";
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or FormatException or InvalidDataException)
+        { Status = e is InvalidDataException ? e.Message : "Could not import the workflow. Check the file and try again."; }
+        ReportWorkflowEditorStatus();
+    }
+
+    public void ExportWorkflow(string path)
+    {
+        try
+        {
+            var revision = session?.Ready == true ? session.Document.StoredWorkflow.Revision : Guid.NewGuid().ToString("N");
+            var json = DraftWorkflow(revision).ToJson().ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+            using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            using var writer = new StreamWriter(output);
+            writer.Write(json);
+            Status = "Workflow exported.";
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException or InvalidDataException)
+        { Status = e is InvalidDataException ? e.Message : "Could not export the workflow. Choose a new file name and try again."; }
+        ReportWorkflowEditorStatus();
+    }
+
+    private WorkflowPlan DraftWorkflow(string revision)
+    {
+        var steps = Preferences.Instructions.Select(i =>
+        {
+            int min = i.MinimumMinutes, max = i.MaximumMinutes;
+            if (i.Type == InstructionType.Gathering && (!int.TryParse(i.MinimumText, out min) || !int.TryParse(i.MaximumText, out max)))
+                throw new InvalidDataException("Gathering step duration must be numeric.");
+            return new WorkflowStep
+            {
+                Id = i.Id, Action = ToAction(i.Type), Enabled = i.Enabled, MinimumMinutes = min,
+                MaximumMinutes = max, SmartPatrol = i.SmartPatrol, ResetTimer = i.ResetTimer, Preserved = i.CompatibleFields ?? new()
+            };
+        }).ToArray();
+        if (!Enum.TryParse<CompletionAction>(Preferences.AfterFinish, out var finish) || !Enum.IsDefined(finish))
+            throw new InvalidDataException("Choose what to do after all characters finish.");
+        return new WorkflowPlan { Revision = revision, Steps = steps, Finish = finish };
+    }
+
     public void SaveDaily()
     {
         if (session == null)
@@ -478,22 +1041,15 @@ public sealed class MainViewModel : Observable, IDisposable
                 { Status = "Gathering duration must be numeric and within verified bounds."; return; }
                 step.MinimumMinutes = stepMin; step.MaximumMinutes = stepMax;
             }
-            Preferences.GatherMin = min; Preferences.GatherMax = max; if (Save()) Status = "Saved Hexor draft only; choose a valid LegionCommander configuration to apply."; return;
+            Preferences.GatherMin = min; Preferences.GatherMax = max; if (Save()) Status = "Saved Hexor draft only; choose a valid game configuration to apply."; return;
         }
+        if (CaptchaPauseApplies && ChallengePauseBlocking) { Status = ChallengePauseMessage.Replace("apply is paused", "workflow apply is paused").Replace("apply resumption is waiting", "workflow apply resumption is waiting"); return; }
         if (!session.Ready) { Status = session.Document.Message; return; }
         try
         {
-            var steps = Preferences.Instructions.Select(i =>
-            {
-                if (!int.TryParse(i.MinimumText, out int min) || !int.TryParse(i.MaximumText, out int max)) throw new InvalidDataException("Step duration must be numeric.");
-                return new WorkflowStep { Id = i.Id, Action = ToAction(i.Type), Enabled = i.Enabled, MinimumMinutes = min,
-                    MaximumMinutes = max, SmartPatrol = i.SmartPatrol, ResetTimer = i.ResetTimer, Preserved = i.CompatibleFields ?? new() };
-            }).ToArray();
-            if (!Enum.TryParse<CompletionAction>(Preferences.AfterFinish, out var finish) || !Enum.IsDefined(finish))
-                throw new InvalidDataException("Choose GatherOnCharacter or NextAccount.");
-            session.SaveWorkflow(new() { Revision = session.Document.StoredWorkflow.Revision, Steps = steps, Finish = finish });
+            session.SaveWorkflow(DraftWorkflow(session.Document.StoredWorkflow.Revision));
             LoadPlan(session.Document.EffectiveWorkflow); Changed(nameof(WorkflowNotice)); Changed(nameof(ConfigurationStatus));
-            Status = "Workflow saved and verified. One enabled Switch Character step is last; no live execution requested.";
+            Status = "Workflow settings saved and verified. They apply when the game or the next task starts.";
         }
         catch (Exception e) { ReportSaveFailure(e); }
     }
@@ -506,15 +1062,16 @@ public sealed class MainViewModel : Observable, IDisposable
             Preferences.MaxAccounts = accounts; Preferences.WorkMin = min; Preferences.WorkMax = max; Preferences.RestMin = rmin; Preferences.RestMax = rmax;
             if (Save()) Status = "Saved Hexor schedule draft only; no scheduler notification sent."; return;
         }
+        if (CaptchaPauseApplies && ChallengePauseBlocking) { Status = ChallengePauseMessage.Replace("apply is paused", "schedule apply is paused").Replace("apply resumption is waiting", "schedule apply resumption is waiting"); return; }
         if (!session.Ready) { Status = session.Document.Message; return; }
-        try { session.SaveSchedule(new(Preferences.ScheduleEnabled, accounts, min, max, rmin, rmax)); Status = "Work Schedule persisted and verified. LegionCommander was not notified; reload it there before relying on changes."; }
+        try { session.SaveSchedule(new(Preferences.ScheduleEnabled, accounts, min, max, rmin, rmax)); Status = "Work Schedule persisted and verified. It applies when the game or the next task starts."; }
         catch (Exception e) { ReportSaveFailure(e); }
     }
     private static bool Range(string a, string b, out int min, out int max) { max = 0; return int.TryParse(a, out min) && int.TryParse(b, out max) && min >= 1 && max >= min && max <= 10080; }
     private void ReportSaveFailure(Exception e) => Status = e is InvalidDataException or ConfigurationConflictException or PartialSettingsWriteException ? e.Message : "Settings were not saved (" + e.GetType().Name + ").";
 
     public void RetryAutoTaskMirror() { try { if (session == null) throw new InvalidDataException("Select a configuration first."); Status = session.RetryMirror(); } catch (Exception e) { ReportSaveFailure(e); } }
-    public void SaveOriginalUiLanguage() { try { if (session == null) throw new InvalidDataException("Select a configuration first."); session.SaveLanguage("UserLanguage", OriginalUiCulture); Status = "LegionCommander UI preference saved; its running process was not notified."; } catch (Exception e) { ReportSaveFailure(e); } }
+    public void SaveOriginalUiLanguage() { try { if (session == null) throw new InvalidDataException("Select a configuration first."); session.SaveLanguage("UserLanguage", OriginalUiCulture); Status = "Interface language preference saved; it applies the next time the game starts."; } catch (Exception e) { ReportSaveFailure(e); } }
     public void SaveMachinePaths()
     {
         try { if (session == null || machine == null) throw new InvalidDataException("Select a configuration first."); session.SaveMachinePaths(machine, new Dictionary<string, string> { ["GamePath_TW"] = GamePathTw.Trim(), ["GamePath_KR"] = GamePathKr.Trim(), ["GamePath_Global"] = GamePathGlobal.Trim() }); RefreshMachineAssociation(); Status = "Machine paths saved and verified; no game was launched."; }
@@ -616,6 +1173,204 @@ public sealed class MainViewModel : Observable, IDisposable
         }
         finally { refreshingDetection = false; }
     }
+    public bool CaptchaNotifications
+    {
+        get => Preferences.CaptchaNotifications;
+        set
+        {
+            if (Preferences.CaptchaNotifications == value) return;
+            var previous = Preferences.CaptchaNotifications; Preferences.CaptchaNotifications = value;
+            if (!Save()) Preferences.CaptchaNotifications = previous;
+            RefreshCaptchaTexts(captchaSnapshot); Changed();
+        }
+    }
+    public bool CaptchaPauseApplies
+    {
+        get => Preferences.CaptchaPauseApplies;
+        set
+        {
+            if (Preferences.CaptchaPauseApplies == value) return;
+            var previous = Preferences.CaptchaPauseApplies; Preferences.CaptchaPauseApplies = value;
+            if (!Save()) Preferences.CaptchaPauseApplies = previous;
+            RefreshCaptchaTexts(captchaSnapshot); Changed();
+        }
+    }
+    public bool CaptchaResumeConfirmation
+    {
+        get => Preferences.CaptchaResumeConfirmation;
+        set
+        {
+            if (Preferences.CaptchaResumeConfirmation == value) return;
+            var previous = Preferences.CaptchaResumeConfirmation; Preferences.CaptchaResumeConfirmation = value;
+            if (!Save()) Preferences.CaptchaResumeConfirmation = previous;
+            if (!value && challengeResumePending) { challengeResumePending = false; Changed(nameof(ChallengeResumePending)); }
+            Changed();
+        }
+    }
+    // Observation of challenge signals on the game session.
+    public async Task PollCaptchaAsync()
+    {
+        if (pollingCaptcha || lifetime.IsCancellationRequested) return;
+        pollingCaptcha = true;
+        try
+        {
+            var snapshot = await Task.Run(captchaMonitor.Observe, lifetime.Token);
+            if (snapshot.Phase != captchaSnapshot.Phase || snapshot.Detail != captchaSnapshot.Detail)
+                Diagnostics.Log("captcha-monitor", $"phase={snapshot.Phase}; observed={(snapshot.LastSignalAt != null ? "yes" : "no")}");
+            var previous = captchaSnapshot;
+            captchaSnapshot = snapshot;
+            UpdateChallengePauseState();
+            RefreshCaptchaTexts(snapshot);
+            if (previous.ChallengeActive != snapshot.ChallengeActive) Changed(nameof(CaptchaChallengeActive));
+            if (!ReferenceEquals(previous.RecentRecords, snapshot.RecentRecords))
+            {
+                CaptchaRecordLines = snapshot.RecentRecords.Select(record =>
+                    $"{record.ObservedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}  ·  {CaptchaPhaseLabel(record.Phase)}").ToArray();
+                Changed(nameof(CaptchaRecordLines));
+                Changed(nameof(CaptchaRecordsSummary));
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception e) { Diagnostics.Log("captcha-monitor", "poll-failed; type=" + e.GetType().Name); }
+        finally { pollingCaptcha = false; }
+    }
+    private void RefreshCaptchaTexts(CaptchaSnapshot snapshot)
+    {
+        captchaStatusText = Preferences.CaptchaNotifications ? CaptchaTile(snapshot) : "CAPTCHA notifications off";
+        captchaDiagnostics = string.Join(Environment.NewLine,
+            snapshot.Detail,
+            "Signals: " + snapshot.SourcesDescription,
+            "Hexor never reads challenge images or answers, never touches the provider's private automation channels, and cannot resolve the challenge for you.",
+            "GuardianLogoutAvoidance is the provider's separate logout/relogin avoidance setting; it works outside Abyss only and is not CAPTCHA solving.");
+        Changed(nameof(CaptchaStatusText)); Changed(nameof(CaptchaDiagnostics));
+    }
+    private static string CaptchaTile(CaptchaSnapshot snapshot) => snapshot.Phase switch
+    {
+        CaptchaPhase.ChallengeDetected => CaptchaPhaseLabel(snapshot.Phase) + " " + TileTime(snapshot.DetectedAt),
+        CaptchaPhase.Resolved => CaptchaPhaseLabel(snapshot.Phase) + " " + TileTime(snapshot.LastSignalAt),
+        _ => CaptchaPhaseLabel(snapshot.Phase),
+    };
+    private static string CaptchaPhaseLabel(CaptchaPhase phase) => phase switch
+    {
+        CaptchaPhase.ChallengeDetected => "CAPTCHA detected",
+        CaptchaPhase.AnswerDispatched => "CAPTCHA active · awaiting result",
+        CaptchaPhase.Resolved => "CAPTCHA clearance reported",
+        CaptchaPhase.Failed => "CAPTCHA attempt failed · check game",
+        CaptchaPhase.OutcomeUnknown => "CAPTCHA outcome unknown",
+        _ => "No challenge yet",
+    };
+    private static string TileTime(DateTimeOffset? time) => time?.ToLocalTime().ToString("HH:mm:ss") ?? "";
+    // Read-only visual challenge detection on the AION2 window. Detection and notification only:
+    // Hexor never reads challenge answer content, never generates or submits answers, and this
+    // poll never issues pause or resume commands to any automation task.
+    public async Task PollVisualMonitorAsync()
+    {
+        if (pollingVisual || lifetime.IsCancellationRequested || !Preferences.VisualDetectionEnabled) return;
+        pollingVisual = true;
+        try
+        {
+            visualMonitor.Options = new VisualChallengeMonitorOptions
+            {
+                Interval = TimeSpan.FromSeconds(Math.Clamp(ParseVisualInterval(), 1, 60)),
+                Threshold = VisualThreshold(),
+                TemplateFolder = Preferences.VisualDetectionTemplateFolder,
+            };
+            var previousPhase = visualSnapshot.Phase;
+            var snapshot = await Task.Run(visualMonitor.Poll, lifetime.Token);
+            if (snapshot.Phase != previousPhase || snapshot.Detail != visualSnapshot.Detail)
+                Diagnostics.Log("visual-monitor", $"phase={snapshot.Phase}; windows={snapshot.WindowCount}; templates={snapshot.TemplateCount}" +
+                    (snapshot.Confidence is { } confidence ? $"; confidence={confidence:F2}" : ""));
+            visualSnapshot = snapshot;
+            UpdateChallengePauseState();
+            visualStatusText = VisualTile(snapshot);
+            visualDetail = string.Join(Environment.NewLine, snapshot.Detail,
+                "Detection is visual only: Hexor never reads challenge answer content, never generates or submits answers, and never pauses automation.",
+                $"Windows: {snapshot.WindowCount}; patterns: {snapshot.TemplateCount}; interval: {ParseVisualInterval()}s; threshold: {VisualThreshold():F2}.",
+                snapshot.LauncherSummary.Length > 0 ? "Launcher provenance: " + snapshot.LauncherSummary + "." : "Launcher provenance unavailable (parent process could not be attributed).");
+            Changed(nameof(VisualMonitorStatusText)); Changed(nameof(VisualMonitorDetail));
+            if (snapshot.Phase == VisualMonitorPhase.ChallengeDetected && previousPhase != VisualMonitorPhase.ChallengeDetected && Preferences.VisualDetectionSound)
+                System.Media.SystemSounds.Exclamation.Play();
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception e) { Diagnostics.Log("visual-monitor", "poll-failed; type=" + e.GetType().Name); }
+        finally { pollingVisual = false; }
+    }
+    private double VisualThreshold() => Math.Clamp(0.98 - Preferences.VisualDetectionSensitivity / 100.0 * 0.38, 0.60, 0.98);
+    private int ParseVisualInterval()
+    {
+        try { return int.Parse(VisualDetectionIntervalText, CultureInfo.InvariantCulture); }
+        catch (Exception e) when (e is FormatException or OverflowException) { return Preferences.VisualDetectionIntervalSeconds; }
+    }
+    private static string VisualTile(VisualMonitorSnapshot snapshot) => snapshot.Phase switch
+    {
+        VisualMonitorPhase.ChallengeDetected => "Visual challenge detected " + TileTime(snapshot.DetectedAt),
+        VisualMonitorPhase.Monitoring => "Monitoring " + TileTime(snapshot.RecentEvents.Count > 0 ? snapshot.RecentEvents[^1].ObservedAt : null),
+        VisualMonitorPhase.Resolved => "Visual pattern no longer detected",
+        VisualMonitorPhase.Error => "Visual monitor error",
+        _ => "Visual detection off",
+    };
+    public bool VisualDetectionEnabled
+    {
+        get => Preferences.VisualDetectionEnabled;
+        set
+        {
+            if (Preferences.VisualDetectionEnabled == value) return;
+            var previous = Preferences.VisualDetectionEnabled; Preferences.VisualDetectionEnabled = value;
+            if (!Save()) { Preferences.VisualDetectionEnabled = previous; return; }
+            Diagnostics.Log("visual-monitor", "detection=" + (value ? "enabled" : "disabled"));
+            if (!value) { visualSnapshot = visualSnapshot with { Phase = VisualMonitorPhase.Idle }; visualStatusText = "Visual detection off"; Changed(nameof(VisualMonitorStatusText)); }
+            Changed();
+        }
+    }
+    public bool VisualDetectionSound
+    {
+        get => Preferences.VisualDetectionSound;
+        set
+        {
+            if (Preferences.VisualDetectionSound == value) return;
+            var previous = Preferences.VisualDetectionSound; Preferences.VisualDetectionSound = value;
+            if (!Save()) Preferences.VisualDetectionSound = previous;
+            Changed();
+        }
+    }
+    public int VisualDetectionSensitivity
+    {
+        get => Preferences.VisualDetectionSensitivity;
+        set
+        {
+            var clamped = Math.Clamp(value, 0, 100);
+            if (Preferences.VisualDetectionSensitivity == clamped) return;
+            var previous = Preferences.VisualDetectionSensitivity; Preferences.VisualDetectionSensitivity = clamped;
+            if (!Save()) Preferences.VisualDetectionSensitivity = previous;
+            Changed();
+        }
+    }
+    private string visualDetectionIntervalText = "";
+    public string VisualDetectionIntervalText
+    {
+        get => visualDetectionIntervalText.Length == 0 ? Preferences.VisualDetectionIntervalSeconds.ToString(CultureInfo.InvariantCulture) : visualDetectionIntervalText;
+        set
+        {
+            visualDetectionIntervalText = value;
+            if (!int.TryParse(value, CultureInfo.InvariantCulture, out var parsed)) return;
+            parsed = Math.Clamp(parsed, 1, 60);
+            if (Preferences.VisualDetectionIntervalSeconds == parsed) return;
+            var previous = Preferences.VisualDetectionIntervalSeconds; Preferences.VisualDetectionIntervalSeconds = parsed;
+            if (!Save()) Preferences.VisualDetectionIntervalSeconds = previous;
+        }
+    }
+    public string VisualDetectionTemplateFolder
+    {
+        get => Preferences.VisualDetectionTemplateFolder ?? DefaultVisualTemplateFolder;
+        set
+        {
+            if (string.Equals(VisualDetectionTemplateFolder, value, StringComparison.OrdinalIgnoreCase)) return;
+            var previous = Preferences.VisualDetectionTemplateFolder; Preferences.VisualDetectionTemplateFolder = string.IsNullOrWhiteSpace(value) ? null : value;
+            if (!Save()) Preferences.VisualDetectionTemplateFolder = previous;
+            Changed();
+        }
+    }
+    public static string DefaultVisualTemplateFolder => Path.Combine(AppContext.BaseDirectory, "ChallengeTemplates");
     public void Dispose()
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
@@ -624,3 +1379,53 @@ public sealed class MainViewModel : Observable, IDisposable
     }
 }
 
+public sealed class LiveSessionRowViewModel
+{
+    public RuntimeSessionRow Row { get; }
+    private readonly MainViewModel model;
+    public string Label => Row.Direct
+        ? $"PID {Row.ProcessId} · {Row.ControllerState} · readiness {Row.Readiness} · Lv {Row.CharacterLevel} · map {Row.MapId}"
+        : $"#{Row.AccountId} · PID {Row.ProcessId} · {Row.ControllerState} · readiness {Row.Readiness} · Lv {Row.CharacterLevel} · map {Row.MapId}";
+    public string Ipc => Row.Direct ? "Connected (Hexor)" : Row.IpcConnected ? "Connected" : "Not connected";
+    public System.Windows.Visibility BridgeControls => Row.Direct ? System.Windows.Visibility.Collapsed : System.Windows.Visibility.Visible;
+    public System.Windows.Visibility DirectControls => Row.Direct ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
+    public RelayCommand PauseCommand { get; }
+    public RelayCommand ContinueCommand { get; }
+    public RelayCommand StopCommand { get; }
+    public RelayCommand RecordsCommand { get; }
+    public RelayCommand RefreshCommand { get; }
+    public LiveSessionRowViewModel(MainViewModel model, RuntimeSessionRow row)
+    {
+        this.model = model;
+        Row = row;
+        PauseCommand = new(() => _ = model.DailyControlAsync(Row.AccountId, "pause"));
+        ContinueCommand = new(() => _ = model.DailyControlAsync(Row.AccountId, "continue"));
+        StopCommand = new(() =>
+        {
+            var confirmed = model.LiveStopConfirmation?.Invoke(Row) ?? false;
+            if (!confirmed) return;
+            _ = Row.Direct ? model.GameStopAsync(Row.ProcessId) : model.DailyControlAsync(Row.AccountId, "stop");
+        });
+        RecordsCommand = new(() => _ = model.LoadDailyRecordsForAsync(this));
+        RefreshCommand = new(() => _ = model.GameRefreshAsync(Row.ProcessId));
+    }
+}
+
+public sealed class LiveIncidentRowViewModel
+{
+    public RuntimeIncidentRow Row { get; }
+    private readonly MainViewModel model;
+    public string Label => $"#{Row.AccountId} · {Row.Status} · {Row.Summary}";
+    public RelayCommand ResolveCommand { get; }
+    public LiveIncidentRowViewModel(MainViewModel model, RuntimeIncidentRow row)
+    {
+        this.model = model;
+        Row = row;
+        ResolveCommand = new(() =>
+        {
+            var response = model.LiveResolvePrompt?.Invoke(Row);
+            if (response is not { } prompt) return;
+            _ = model.ResolveIncidentAsync(Row, prompt.Outcome, prompt.Summary);
+        });
+    }
+}

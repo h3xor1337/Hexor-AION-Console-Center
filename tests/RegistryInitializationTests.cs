@@ -26,8 +26,8 @@ internal static class RegistryInitializationTests
         check(RegistryDefaults.Template.Where(t => t.Type == RegistrySettingType.BooleanDWord).All(t => t.InitializationDefault == 0),
             "Every missing canonical Boolean defaults OFF");
         check(registry.Read("MiniGame", "AutoEnter") == 0, "Fresh customer installation creates Shugo Auto Enter as DWORD OFF");
-        check(registry.Read("ResourceGrab", "AbyssLayer") == 21 && registry.Read("ResourceGrab", "AutoDungeonPreferred") == 0,
-            "Missing resource choices default to Lower 21 and Krao Cave 0");
+        check(registry.Read("ResourceGrab", "AbyssLayer") == 21 && registry.Read("ResourceGrab", "AutoDungeonMode") == 0,
+            "Missing resource choices default to Lower 21 and Easy 0");
         check(registry.Read("ResourceGrab", "AuctionAutoSell") == 0 && registry.Read("ResourceGrab", "AuctionPriceMode") == 1,
             "Missing auction settings default to OFF and Average");
         check(registry.Read("Enhance", "DestroyInsteadOfExtract") == 0, "Fresh customer installation creates Equipment Extraction as DWORD OFF");
@@ -87,7 +87,7 @@ internal static class RegistryInitializationTests
         using (var key = Registry.CurrentUser.OpenSubKey(branch + "\\ResourceGrab", true))
         {
             key!.SetValue("AbyssLayer", 22, RegistryValueKind.DWord);
-            key.SetValue("AutoDungeonPreferred", 1, RegistryValueKind.DWord);
+            key.SetValue("AutoDungeonMode", 1, RegistryValueKind.DWord);
             key.SetValue("CustomerResourceValue", "retain", RegistryValueKind.String);
         }
         writes.Clear(); result = new RegistryInitializationService(auditedRegistry).Ensure();
@@ -96,7 +96,7 @@ internal static class RegistryInitializationTests
         check(RegistryDefaults.Template.Where(t => !t.ResetOnStartup && t.Type == RegistrySettingType.BooleanDWord).All(t => registry.Read(t.Section, t.Name) == 1),
             "Startup preserves every enabled customer Boolean outside Auto Auction");
         using (var key = Registry.CurrentUser.OpenSubKey(branch + "\\ResourceGrab"))
-            check((int?)key!.GetValue("AbyssLayer") == 22 && (int?)key.GetValue("AutoDungeonPreferred") == 1 && (string?)key.GetValue("CustomerResourceValue") == "retain",
+            check((int?)key!.GetValue("AbyssLayer") == 22 && (int?)key.GetValue("AutoDungeonMode") == 1 && (string?)key.GetValue("CustomerResourceValue") == "retain",
                 "Startup preserves existing resource choices and unrelated customer settings");
         using (var key = Registry.CurrentUser.OpenSubKey(branch + "\\ResourceGrab", true))
         {
@@ -116,40 +116,40 @@ internal static class RegistryInitializationTests
                 && registry.Read("ResourceGrab", "AuctionAutoSell") == 0 && registry.Read("ResourceGrab", "AuctionPriceMode") == 1,
                 "Application restart resets Auto Auction and refreshes UI from the actual registry");
             check(restarted.Toggles.Single(t => t.Name == "AutoEnterAbyss").Value == true && restarted.AbyssLayer == -1
-                && restarted.PreferredDungeon == 1, "Resource UI reflects preserved customer values after initialization");
+                && restarted.DungeonMode == 1, "Resource UI reflects preserved customer values after initialization");
             restarted.AuctionPriceMode = 0;
             check(registry.Read("ResourceGrab", "AuctionPriceMode") == 0, "Auction price edit writes and verifies Lowest until the next startup");
             restarted.InitializeRegistryDefaults();
             check(restarted.AuctionPriceMode == 1, "Explicit initialization reloads the restored Average selection");
-            restarted.AbyssLayer = 1; restarted.PreferredDungeon = 0;
-            check(registry.Read("ResourceGrab", "AbyssLayer") == 23 && registry.Read("ResourceGrab", "AutoDungeonPreferred") == 0
-                && restarted.AbyssLayer == 1 && restarted.PreferredDungeon == 0, "Middle and Krao Cave selections write exact DWORD encodings and refresh UI");
-            restarted.AbyssLayer = 0; restarted.PreferredDungeon = 1;
-            check(registry.Read("ResourceGrab", "AbyssLayer") == 21 && registry.Read("ResourceGrab", "AutoDungeonPreferred") == 1
-                && restarted.AbyssLayer == 0 && restarted.PreferredDungeon == 1, "Lower and Draupnir Cave selections write exact DWORD encodings and refresh UI");
+            restarted.AbyssLayer = 1; restarted.DungeonMode = 0;
+            check(registry.Read("ResourceGrab", "AbyssLayer") == 23 && registry.Read("ResourceGrab", "AutoDungeonMode") == 0
+                && restarted.AbyssLayer == 1 && restarted.DungeonMode == 0, "Middle and Krao Cave selections write exact DWORD encodings and refresh UI");
+            restarted.AbyssLayer = 0; restarted.DungeonMode = 1;
+            check(registry.Read("ResourceGrab", "AbyssLayer") == 21 && registry.Read("ResourceGrab", "AutoDungeonMode") == 1
+                && restarted.AbyssLayer == 0 && restarted.DungeonMode == 1, "Lower and Draupnir Cave selections write exact DWORD encodings and refresh UI");
             restarted.AbyssLayer = 1;
             restarted.InitializeRegistryDefaults();
-            check(restarted.AbyssLayer == 1 && restarted.PreferredDungeon == 1, "Initialization preserves Middle and Draupnir Cave choices");
+            check(restarted.AbyssLayer == 1 && restarted.DungeonMode == 1, "Initialization preserves Middle and Draupnir Cave choices");
             var beforeNoChange = writes.Count;
-            restarted.AbyssLayer = 1; restarted.PreferredDungeon = 1;
+            restarted.AbyssLayer = 1; restarted.DungeonMode = 1;
             check(writes.Count == beforeNoChange, "Matching resource selections avoid redundant writes");
-            restarted.AbyssLayer = -1; restarted.PreferredDungeon = 2;
-            check(registry.Read("ResourceGrab", "AbyssLayer") == 23 && registry.Read("ResourceGrab", "AutoDungeonPreferred") == 1,
+            restarted.AbyssLayer = -1; restarted.DungeonMode = 2;
+            check(registry.Read("ResourceGrab", "AbyssLayer") == 23 && registry.Read("ResourceGrab", "AutoDungeonMode") == 1,
                 "Invalid resource selection indices cannot alter saved preferences");
             using var resourceKey = Registry.CurrentUser.OpenSubKey(branch + "\\ResourceGrab");
-            check(resourceKey!.GetValueKind("AbyssLayer") == RegistryValueKind.DWord && resourceKey.GetValueKind("AutoDungeonPreferred") == RegistryValueKind.DWord
+            check(resourceKey!.GetValueKind("AbyssLayer") == RegistryValueKind.DWord && resourceKey.GetValueKind("AutoDungeonMode") == RegistryValueKind.DWord
                 && (string?)resourceKey.GetValue("CustomerResourceValue") == "retain" && registry.Read("ResourceGrab", "AutoEnterAbyss") == 1,
                 "Resource preference edits preserve unrelated values and keep exact DWORD types");
         }
         using (var restarted = new MainViewModel(new JsonConfigurationService(Path.Combine(temporaryRoot, "resource-restart-preferences.json"), new SettingsBackupService()), registry))
-            check(restarted.AbyssLayer == 1 && restarted.PreferredDungeon == 1 && registry.Read("ResourceGrab", "AbyssLayer") == 23,
+            check(restarted.AbyssLayer == 1 && restarted.DungeonMode == 1 && registry.Read("ResourceGrab", "AbyssLayer") == 23,
                 "Application restart loads and preserves existing Middle and Draupnir Cave values");
         try { registry.WriteVerified("ResourceGrab", "AbyssLayer", 22); check(false, "Unverified Abyss layer encoding rejected"); }
         catch (InvalidDataException) { check(registry.Read("ResourceGrab", "AbyssLayer") == 23, "Only exact Abyss layer DWORD encodings 21 and 23 are writable"); }
         using (var deniedVm = new MainViewModel(new JsonConfigurationService(Path.Combine(temporaryRoot, "resource-denied-preferences.json"), new SettingsBackupService()), new DeniedRegistry()))
         {
-            deniedVm.AbyssLayer = 1; deniedVm.PreferredDungeon = 1;
-            check(deniedVm.AbyssLayer == -1 && deniedVm.PreferredDungeon == -1, "Failed resource writes reload actual missing values without displaying a successful selection");
+            deniedVm.AbyssLayer = 1; deniedVm.DungeonMode = 1;
+            check(deniedVm.AbyssLayer == -1 && deniedVm.DungeonMode == -1, "Failed resource writes reload actual missing values without displaying a successful selection");
         }
 
         Reset(); service.Ensure();

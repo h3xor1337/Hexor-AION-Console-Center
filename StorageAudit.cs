@@ -47,7 +47,7 @@ public static class StorageAudit
         {
             StorageTarget.PortableJson => LegionConfigurationService.PortableKeys.Contains(key) || key == "Workflow",
             StorageTarget.MachineJson => LegionConfigurationService.MachineKeys.Contains(key),
-            StorageTarget.Registry => RegistryNames.Contains(key) || LegionCommanderRegistrySchema.Definitions.Any(d => key == d.Section + "." + d.Name),
+            StorageTarget.Registry => RegistryNames.Contains(key) || LegionCommanderRegistrySchema.Definitions.Any(d => key == d.Section + "." + d.Name) || LegionCommanderFeatureSettings.IsSetting(key),
             _ => false
         };
         return JsonSerializer.Serialize(new

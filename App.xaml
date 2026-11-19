@@ -12,6 +12,32 @@
   <Style TargetType="ComboBox"><Setter Property="MinHeight" Value="40"/><Setter Property="Margin" Value="0,8,12,12"/><Setter Property="Padding" Value="10,7"/><Setter Property="Width" Value="220"/><Setter Property="Foreground" Value="#F1EFF8"/><Setter Property="Background" Value="#292638"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ComboBox"><Grid><ToggleButton Focusable="False" IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" ClickMode="Press"><ToggleButton.Template><ControlTemplate TargetType="ToggleButton"><Border Background="#292638" BorderBrush="#48405D" BorderThickness="1" CornerRadius="6"><TextBlock Text="⌄" HorizontalAlignment="Right" Margin="0,0,12,0" Foreground="#D8C5F5"/></Border></ControlTemplate></ToggleButton.Template></ToggleButton><ContentPresenter Margin="12,8,30,8" IsHitTestVisible="False" Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"/><Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" AllowsTransparency="True" Focusable="False"><Border Background="#292638" BorderBrush="#65517E" BorderThickness="1" MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"><ScrollViewer MaxHeight="350"><ItemsPresenter/></ScrollViewer></Border></Popup></Grid><ControlTemplate.Triggers><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter></Style>
   <Style TargetType="ListBox"><Setter Property="Background" Value="#202030"/><Setter Property="Foreground" Value="White"/><Setter Property="BorderThickness" Value="0"/></Style>
 
+  <Style x:Key="WorkflowListStyle" TargetType="ListBox" BasedOn="{StaticResource {x:Type ListBox}}">
+   <Setter Property="Background" Value="#20192D"/>
+   <Setter Property="Padding" Value="5"/>
+   <Setter Property="ItemContainerStyle">
+    <Setter.Value>
+     <Style TargetType="ListBoxItem">
+      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+      <Setter Property="MinHeight" Value="38"/>
+      <Setter Property="Template">
+       <Setter.Value>
+        <ControlTemplate TargetType="ListBoxItem">
+         <Border x:Name="Row" CornerRadius="6" BorderThickness="2" BorderBrush="Transparent" Padding="8,3" Background="Transparent">
+          <ContentPresenter/>
+         </Border>
+         <ControlTemplate.Triggers>
+          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Row" Property="Background" Value="#342749"/></Trigger>
+          <Trigger Property="IsSelected" Value="True"><Setter TargetName="Row" Property="Background" Value="#51377B"/></Trigger>
+          <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Row" Property="BorderBrush" Value="#D8C5FF"/></Trigger>
+         </ControlTemplate.Triggers>
+        </ControlTemplate>
+       </Setter.Value>
+      </Setter>
+     </Style>
+    </Setter.Value>
+   </Setter>
+  </Style>
   <Style TargetType="ScrollBar"><Setter Property="Width" Value="10"/><Setter Property="Background" Value="#1B1928"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ScrollBar"><Grid Background="{TemplateBinding Background}"><Track x:Name="PART_Track" IsDirectionReversed="True" Orientation="{TemplateBinding Orientation}"><Track.DecreaseRepeatButton><RepeatButton Command="ScrollBar.PageUpCommand" Opacity="0" Focusable="False"/></Track.DecreaseRepeatButton><Track.Thumb><Thumb Background="#625276"><Thumb.Template><ControlTemplate TargetType="Thumb"><Border Background="{TemplateBinding Background}" CornerRadius="4" Margin="2,1"/></ControlTemplate></Thumb.Template></Thumb></Track.Thumb><Track.IncreaseRepeatButton><RepeatButton Command="ScrollBar.PageDownCommand" Opacity="0" Focusable="False"/></Track.IncreaseRepeatButton></Track></Grid></ControlTemplate></Setter.Value></Setter></Style>
 
   <Style TargetType="Slider"><Setter Property="Foreground" Value="#B689F4"/><Setter Property="MinHeight" Value="24"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Slider"><Grid VerticalAlignment="Center" Height="24"><Border Height="4" CornerRadius="2" Background="#3B334A"/><Track x:Name="PART_Track"><Track.DecreaseRepeatButton><RepeatButton Command="Slider.DecreaseLarge" Background="#A477DD" Focusable="False"><RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Height="4" CornerRadius="2" Background="{TemplateBinding Background}"/></ControlTemplate></RepeatButton.Template></RepeatButton></Track.DecreaseRepeatButton><Track.Thumb><Thumb Width="16" Height="20"><Thumb.Template><ControlTemplate TargetType="Thumb"><Border Background="#D7B9FF" CornerRadius="4" BorderBrush="#A477DD" BorderThickness="1"/></ControlTemplate></Thumb.Template></Thumb></Track.Thumb><Track.IncreaseRepeatButton><RepeatButton Command="Slider.IncreaseLarge" Focusable="False"><RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"/></ControlTemplate></RepeatButton.Template></RepeatButton></Track.IncreaseRepeatButton></Track></Grid></ControlTemplate></Setter.Value></Setter></Style>

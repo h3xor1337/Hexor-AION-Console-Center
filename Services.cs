@@ -8,6 +8,7 @@ using System.Text.RegularExpressions;
 using System.Text;
 using System.Security.Cryptography;
 using Microsoft.Win32;
+using Hexor.Compatibility;
 namespace Hexor;
 public enum DiagnosticSeverity { Information, Warning, Error }
 public static class Diagnostics
@@ -33,7 +34,7 @@ public static class Diagnostics
  public static bool TryLog(string area,string outcome)=>TryLog(area,outcome,Severity(Clean(area),Clean(outcome)));
  public static void Log(string area,string outcome,DiagnosticSeverity severity)=>TryLog(area,outcome,severity);
  public static bool TryLog(string area,string outcome,DiagnosticSeverity severity)=>TryLog(area,outcome,severity switch
- {DiagnosticSeverity.Error=>"error",DiagnosticSeverity.Warning=>"warning",_=>"information"});
+ {DiagnosticSeverity.Error=>"ERROR",DiagnosticSeverity.Warning=>"WARN",_=>"INFO"});
  static bool TryLog(string area,string outcome,string severity)
  {
   lock(logLock)
@@ -47,10 +48,10 @@ public static class Diagnostics
     try
     {
      var component=Clean(area);var details=Clean(outcome);
-     var record=JsonSerializer.Serialize(new{timestamp=DateTimeOffset.UtcNow,severity,sessionId=SessionId,processId=Environment.ProcessId,component,eventDetails=details,area=component,eventName=details})+Environment.NewLine;
+     var record=$"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff zzz} [{severity}] [{SessionId}] [pid {Environment.ProcessId}] {component}: {Flatten(details)}"+Environment.NewLine;
      var bytes=Encoding.UTF8.GetBytes(record);RotateIfNeeded(bytes.Length);
-     using var stream=new FileStream(ActiveLogPath,FileMode.Append,FileAccess.Write,FileShare.Read,4096,severity=="error"||component.Contains("update",StringComparison.OrdinalIgnoreCase)?FileOptions.WriteThrough:FileOptions.None);
-     stream.Write(bytes);stream.Flush(severity=="error"||component.Contains("update",StringComparison.OrdinalIgnoreCase));
+     using var stream=new FileStream(ActiveLogPath,FileMode.Append,FileAccess.Write,FileShare.Read,4096,severity=="ERROR"||component.Contains("update",StringComparison.OrdinalIgnoreCase)?FileOptions.WriteThrough:FileOptions.None);
+     stream.Write(bytes);stream.Flush(severity=="ERROR"||component.Contains("update",StringComparison.OrdinalIgnoreCase));
      return true;
     }
     finally{processGate.ReleaseMutex();}
@@ -69,9 +70,21 @@ public static class Diagnostics
   File.Move(active,archive,false);
   foreach(var old in Archives().Skip(ArchiveRetention))try{File.Delete(old);}catch(IOException){}catch(UnauthorizedAccessException){}
  }
- static string RedactRecord(string line){if(line.Length>64*1024)return JsonSerializer.Serialize(new{timestamp=DateTimeOffset.UtcNow,severity="warning",component="support-export",eventDetails="Oversized or malformed historical diagnostic record omitted."});try{var node=JsonNode.Parse(line);RedactNode(node);return node?.ToJsonString()??"";}catch{return Clean(line);}}
- static void RedactNode(JsonNode? node){if(node is JsonObject obj)foreach(var key in obj.Select(x=>x.Key).ToArray()){if(obj[key] is JsonValue value&&value.TryGetValue<string>(out var text))obj[key]=Clean(text);else RedactNode(obj[key]);}else if(node is JsonArray array)foreach(var child in array)RedactNode(child);}
- static string Severity(string area,string details)=>area.Contains("error",StringComparison.OrdinalIgnoreCase)||area.Contains("unhandled",StringComparison.OrdinalIgnoreCase)||details.Contains("failed",StringComparison.OrdinalIgnoreCase)||details.Contains("error",StringComparison.OrdinalIgnoreCase)?"error":"information";
+ static string RedactRecord(string line){if(line.Length>64*1024)return $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff zzz} [WARN] [{SessionId}] [pid {Environment.ProcessId}] support-export: oversized or malformed historical diagnostic record omitted.";return Clean(line);}
+ // Historical JSON records and structured detail payloads are flattened to readable text:
+ // {"Outcome":"Attempt","OperationId":"x"} -> Outcome=Attempt, OperationId=x
+ static string Flatten(string details)
+ {
+  var text=details??"";
+  if(text.Length<2||text[0]!='{')return text;
+  try
+  {
+   if(JsonNode.Parse(text) is not JsonObject obj)return text;
+   return string.Join(", ",obj.Select(pair=>pair.Key+"="+(pair.Value is JsonValue value&&value.TryGetValue<string>(out var s)?s:pair.Value is null?"null":pair.Value is JsonArray array?"["+string.Join(",",array.Select(item=>item is JsonValue v&&v.TryGetValue<string>(out var item2)?item2:item?.ToJsonString()??"null"))+"]":pair.Value?.ToJsonString()??"null")));
+  }
+  catch{return text;}
+ }
+ static string Severity(string area,string details)=>area.Contains("error",StringComparison.OrdinalIgnoreCase)||area.Contains("unhandled",StringComparison.OrdinalIgnoreCase)||details.Contains("failed",StringComparison.OrdinalIgnoreCase)||details.Contains("error",StringComparison.OrdinalIgnoreCase)?"ERROR":"INFO";
  static string Clean(string value){var text=value??"";text=Regex.Replace(text,"(?i)(license|token|password|authorization|secret|key)\\s*[:=]\\s*[^;\\s]+","$1=[redacted]");text=Regex.Replace(text,"[\\r\\n]"," ");return text.Length>480?text[..480]:text;}
  static bool IsElevated(){try{return new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);}catch{return false;}}
 }
@@ -101,12 +114,19 @@ public interface IRegistrySettingsService
  bool RestoreStartupDefault(string section,string name) => throw new NotSupportedException("Startup defaults are unavailable.");
  int ReadAppliedSchemaVersion() => 0;
  void WriteAppliedSchemaVersion(int version) { }
+ GatheringRegistrySnapshot ReadGathering() => new(new(null,false,false),new(null,false,false));
+ string? ReadString(string section,string name) => null;
+ void WriteGatheringSelectionVerified(GatheringRegistrySnapshot expected,int targetIndex,bool enabled) => throw new NotSupportedException("Gathering settings are unavailable.");
+ void WriteGatheringTargetsVerified(GatheringRegistrySnapshot expected,string targets) => throw new NotSupportedException("Gathering settings are unavailable.");
+ DungeonRegistrySnapshot ReadDungeon() => new(new(null,false,false),new(null,false,true),new(null,false,true));
+ void WriteDungeonPriorityVerified(IReadOnlyList<(int MapId,bool Enabled)> entries) => throw new NotSupportedException("Dungeon settings are unavailable.");
+ IReadOnlyList<(int MapId,bool Enabled)> DungeonDefaults() => [(600001,true),(600032,true),(600031,true),(600012,false)];
 }
-public sealed class RegistrySettingsService(string root="Software\\LegionCommander", Action<string>? auditSink=null, string? schemaStateRoot=null) : IRegistrySettingsService
+public sealed partial class RegistrySettingsService(string root="Software\\LegionCommander", Action<string>? auditSink=null, string? schemaStateRoot=null) : IRegistrySettingsService
 {
  private readonly string schemaStateRoot = schemaStateRoot ?? (root == "Software\\LegionCommander" ? "Software\\Hexor\\ControlCenter" : root + "\\_HexorSchema");
- private static readonly Dictionary<string,string[]> Allowed=new(){["AutoTask"]=["CharacterRace","CharacterJob","ClearSideQuestsBeforeDungeon","ExploreCavesBeforeDungeon","SwitchToGatherAfterTasks","AutoDailyQuests"],["Enhance"]=["AutoEnchantMaxPower","AutoBuyOdEnergy","AutoBuyReviveStone","AutoDungeonQuickJoinEnabled","AutoDailyWaveEnabled","AutoNightmareEnabled","AutoAwakenEnabled","AutoOdMorphEnabled","AutoUpgradeMaxBattlePowerK","DestroyInsteadOfExtract"],["MiniGame"]=["AutoEnter","UseTaiwanVillageRules"]};
- private static void Check(string section,string name){if(LegionCommanderRegistrySchema.Find(section,name)==null&&(!Allowed.TryGetValue(section,out var names)||!names.Contains(name)))throw new InvalidOperationException("Unverified registry setting.");}
+ private static readonly Dictionary<string,string[]> Allowed=new(){["AutoTask"]=["CharacterRace","CharacterJob","ClearSideQuestsBeforeDungeon","ExploreCavesBeforeDungeon","SwitchToGatherAfterTasks","AutoDailyQuests"],["Enhance"]=["AutoEnchantMaxPower","AutoBuyOdEnergy","AutoBuyReviveStone","AutoDungeonQuickJoinEnabled","AutoDailyWaveEnabled","AutoNightmareEnabled","AutoAwakenEnabled","AutoOdMorphEnabled","AutoUpgradeMaxBattlePowerK","DestroyInsteadOfExtract"],["MiniGame"]=["AutoEnter","UseTaiwanVillageRules"],["ResourceGrab"]=["AutoDungeonMode","AutoDungeonPriority"]};
+ private static void Check(string section,string name){if(LegionCommanderRegistrySchema.Find(section,name)==null&&!LegionCommanderFeatureSettings.IsDWord(section,name)&&(!Allowed.TryGetValue(section,out var names)||!names.Contains(name)))throw new InvalidOperationException("Unverified registry setting.");}
  public bool RestoreStartupDefault(string section,string name)=>StorageAudit.Run(StorageTarget.Registry,[section+"."+name],()=>
  {
   var item=LegionCommanderRegistrySchema.Find(section,name);
@@ -117,6 +137,7 @@ public sealed class RegistrySettingsService(string root="Software\\LegionCommand
   using(var key=hive.CreateSubKey(root+"\\"+section))key.SetValue(name,item.InitializationDefault,RegistryValueKind.DWord);
   var after=Inspect(section,name);
   if(!after.Supported||after.Value!=item.InitializationDefault)throw new IOException("Startup default verification failed.");
+  LegionSharedSettings.SyncFromRegistry(section,name,root);
   return true;
  },changed=>changed,auditSink);
  public bool CreateMissingDefault(string section,string name,int value)=>StorageAudit.Run(StorageTarget.Registry,[section+"."+name],()=>
@@ -130,17 +151,28 @@ public sealed class RegistrySettingsService(string root="Software\\LegionCommand
   }
   var verified=Inspect(section,name);
   if(!verified.Supported||verified.Value!=value)throw new IOException("Registry initialization verification failed.");
+  LegionSharedSettings.SyncFromRegistry(section,name,root);
   return true;
  },changed=>changed,auditSink);
  public int ReadAppliedSchemaVersion(){using var hive=RegistryKey.OpenBaseKey(RegistryHive.CurrentUser,RegistryView.Registry64);using var key=hive.OpenSubKey(schemaStateRoot);return key?.GetValue("LegionCommanderSchemaVersion") is int value&&value>=0?value:0;}
  public void WriteAppliedSchemaVersion(int version){if(version<0)throw new InvalidDataException("Invalid registry schema version.");using var hive=RegistryKey.OpenBaseKey(RegistryHive.CurrentUser,RegistryView.Registry64);using var key=hive.CreateSubKey(schemaStateRoot);if(key.GetValue("LegionCommanderSchemaVersion") is int value&&value==version)return;key.SetValue("LegionCommanderSchemaVersion",version,RegistryValueKind.DWord);}
  public int? Read(string section,string name)=>Inspect(section,name).Value;
+ public string? ReadString(string section,string name)
+ {
+  Check(section,name);
+  using var hive=RegistryKey.OpenBaseKey(RegistryHive.CurrentUser,RegistryView.Registry64);
+  using var k=hive.OpenSubKey(root+"\\"+section);
+  if(k==null||!k.GetValueNames().Contains(name,StringComparer.OrdinalIgnoreCase))return null;
+  return k.GetValueKind(name)!=RegistryValueKind.String?null:k.GetValue(name,null,RegistryValueOptions.DoNotExpandEnvironmentNames) as string;
+ }
  public RegistryEntry Inspect(string section,string name){Check(section,name);using var hive=RegistryKey.OpenBaseKey(RegistryHive.CurrentUser,RegistryView.Registry64);using var k=hive.OpenSubKey(root+"\\"+section);if(k==null||!k.GetValueNames().Contains(name,StringComparer.OrdinalIgnoreCase))return new(null,false,true);if(k.GetValueKind(name)!=RegistryValueKind.DWord)return new(null,true,false);return new((int?)k.GetValue(name),true,true);}
  public void WriteVerified(string section,string name,int value)=>StorageAudit.Run(StorageTarget.Registry,[section+"."+name],()=>WriteVerifiedCore(section,name,value),changed=>changed,auditSink);
  private bool WriteVerifiedCore(string section,string name,int value)
  {
   Check(section,name);
   if(name is "CharacterRace" or "CharacterJob")throw new InvalidOperationException("This setting's semantic mapping remains unverified.");
+  // DWORD is unsigned; quality enum labels/ranges are not established by one export.
+  if(LegionCommanderFeatureSettings.IsQualityLevel(section,name))return StoreVerified(section,name,value);
   if(LegionCommanderRegistrySchema.Find(section,name) is { } definition){if(!definition.IsValid(value))throw new InvalidDataException("Unsupported registry value.");}
   else if(name=="AutoUpgradeMaxBattlePowerK"){if(value<1||value>100)throw new InvalidDataException("Maximum battle power must be 1–100K.");}
   else if(value is not (0 or 1))throw new InvalidDataException("Boolean registry values must be 0 or 1.");
@@ -161,7 +193,9 @@ public sealed class RegistrySettingsService(string root="Software\\LegionCommand
   if(before.Value==value)return false;
   using(var hive=RegistryKey.OpenBaseKey(RegistryHive.CurrentUser,RegistryView.Registry64))
   using(var k=hive.CreateSubKey(root+"\\"+section)){k.SetValue(name,value,RegistryValueKind.DWord);}
-  if(Read(section,name)!=value)throw new IOException("Registry read-back verification failed.");Diagnostics.Log("registry","single value verified");return true;
+  if(Read(section,name)!=value)throw new IOException("Registry read-back verification failed.");
+  LegionSharedSettings.SyncFromRegistry(section,name,root);
+  Diagnostics.Log("registry","single value verified");return true;
  }
 }
 public interface IConfigurationDiscoveryService {Task<IReadOnlyList<ConfigurationCandidate>> DiscoverAsync(string? selected,CancellationToken token=default);}

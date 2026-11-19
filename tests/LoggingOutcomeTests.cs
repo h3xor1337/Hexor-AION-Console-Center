@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Hexor;
 using Hexor.Updates;
 
@@ -10,20 +11,32 @@ internal static class LoggingOutcomeTests
 {
     internal static void Run(string root, Action<bool, string> check)
     {
-        JsonElement[] Records() => File.ReadLines(Diagnostics.ActiveLogPath).Select(line =>
+        // Plain-text record format:
+        // 2026-11-19 17:32:41.123 +08:00 [INFO] [sessionId] [pid 1234] component: message
+        var recordPattern = new Regex(
+            @"^(?<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} [+-]\d{2}:\d{2}) \[(?<severity>INFO|WARN|ERROR)\] \[(?<sessionId>[0-9a-f]{32})\] \[pid (?<processId>\d+)\] (?<component>[^:]+): (?<message>.*)$",
+            RegexOptions.CultureInvariant);
+        LogRecord[] Records() => File.ReadLines(Diagnostics.ActiveLogPath).Select(line =>
         {
-            using var document = JsonDocument.Parse(line);
-            return document.RootElement.Clone();
-        }).ToArray();
-        string Details(JsonElement r) => r.GetProperty("eventDetails").GetString()!;
-        bool Severity(JsonElement r, string value) => r.GetProperty("severity").GetString() == value;
+            var match = recordPattern.Match(line);
+            return new LogRecord(
+                match.Success,
+                match.Groups["timestamp"].Value,
+                match.Groups["severity"].Value,
+                match.Groups["sessionId"].Value,
+                int.Parse(match.Groups["processId"].Value),
+                match.Groups["component"].Value,
+                match.Groups["message"].Value);
+        }).Where(r => r.Matched).ToArray();
+        string Details(LogRecord r) => r.Message;
+        bool Severity(LogRecord r, string value) => r.Severity == value;
 
         var cleanupCases = new (VendorOverlayCleanupState[] States, string Details, string Severity)[]
         {
-            ([VendorOverlayCleanupState.Removed, VendorOverlayCleanupState.Restored, VendorOverlayCleanupState.Skipped], "completed; removed=2; failed=0", "information"),
-            ([], "completed; removed=0; failed=0", "information"),
-            ([VendorOverlayCleanupState.Removed, VendorOverlayCleanupState.Failed], "completed; removed=1; failed=1", "error"),
-            ([VendorOverlayCleanupState.BlockedByRunningProcess], "completed; removed=0; failed=1", "error")
+            ([VendorOverlayCleanupState.Removed, VendorOverlayCleanupState.Restored, VendorOverlayCleanupState.Skipped], "completed; removed=2; failed=0", "INFO"),
+            ([], "completed; removed=0; failed=0", "INFO"),
+            ([VendorOverlayCleanupState.Removed, VendorOverlayCleanupState.Failed], "completed; removed=1; failed=1", "ERROR"),
+            ([VendorOverlayCleanupState.BlockedByRunningProcess], "completed; removed=0; failed=1", "ERROR")
         };
         foreach (var item in cleanupCases)
         {
@@ -32,61 +45,55 @@ internal static class LoggingOutcomeTests
             MainWindow.LogCleanupCompleted(results);
             var record = Records().Last();
             check(Severity(record, item.Severity) && Details(record) == item.Details
-                && record.GetProperty("component").GetString() == "cleanup"
-                && record.GetProperty("area").GetString() == "cleanup"
-                && record.GetProperty("eventName").GetString() == item.Details
-                && record.GetProperty("sessionId").GetString() == Diagnostics.SessionId
-                && record.GetProperty("processId").GetInt32() == Environment.ProcessId
-                && record.GetProperty("timestamp").GetDateTimeOffset() != default,
+                && record.Component == "cleanup"
+                && record.SessionId == Diagnostics.SessionId
+                && record.ProcessId == Environment.ProcessId
+                && DateTimeOffset.Parse(record.Timestamp) != default,
                 $"Cleanup {item.Details} uses {item.Severity} and preserves event content and correlation");
         }
 
         StorageAudit.Run(StorageTarget.Registry, ["ResourceGrab.AuctionAutoSell"], () => true, value => value);
-        var audit = Records().Where(r => r.GetProperty("component").GetString() == "storage-audit").ToArray();
-        using var attempt = JsonDocument.Parse(Details(audit[0]));
-        using var verified = JsonDocument.Parse(Details(audit[1]));
-        check(Severity(audit[0], "information") && attempt.RootElement.GetProperty("Outcome").GetString() == "Attempt"
-            && attempt.RootElement.GetProperty("ErrorCategory").ValueKind == JsonValueKind.Null, "Storage Attempt without an error is informational");
-        check(Severity(audit[1], "information") && verified.RootElement.GetProperty("Outcome").GetString() == "ReadBackVerified"
-            && verified.RootElement.GetProperty("ErrorCategory").ValueKind == JsonValueKind.Null, "ReadBackVerified with ErrorCategory=null is informational");
-        check(attempt.RootElement.GetProperty("OperationId").GetString() == verified.RootElement.GetProperty("OperationId").GetString()
-            && audit.All(r => r.GetProperty("sessionId").GetString() == Diagnostics.SessionId
-                && r.GetProperty("processId").GetInt32() == Environment.ProcessId
-                && r.GetProperty("timestamp").GetDateTimeOffset() != default
-                && r.GetProperty("area").GetString() == r.GetProperty("component").GetString()
-                && r.GetProperty("eventName").GetString() == Details(r)), "Structured fields and operation/session correlation remain compatible");
+        var audit = Records().Where(r => r.Component == "storage-audit").ToArray();
+        string Value(string message, string key) => message.Split(", ").Select(part => part.Split('=', 2)).Where(parts => parts.Length == 2 && parts[0] == key).Select(parts => parts[1]).FirstOrDefault() ?? "";
+        check(Severity(audit[0], "INFO") && Value(Details(audit[0]), "Outcome") == "Attempt"
+            && Value(Details(audit[0]), "ErrorCategory") == "null", "Storage Attempt without an error is informational");
+        check(Severity(audit[1], "INFO") && Value(Details(audit[1]), "Outcome") == "ReadBackVerified"
+            && Value(Details(audit[1]), "ErrorCategory") == "null", "ReadBackVerified with ErrorCategory=null is informational");
+        check(Value(Details(audit[0]), "OperationId") == Value(Details(audit[1]), "OperationId") && Value(Details(audit[0]), "OperationId").Length > 0
+            && audit.All(r => r.SessionId == Diagnostics.SessionId
+                && r.ProcessId == Environment.ProcessId
+                && DateTimeOffset.Parse(r.Timestamp) != default), "Structured fields and operation/session correlation remain compatible");
         foreach (var error in new Exception[] { new IOException("test"), new InvalidDataException("test") })
         {
             var propagated = false;
             try { StorageAudit.Run<bool>(StorageTarget.Registry, [], () => throw error, value => value); }
             catch (Exception caught) { propagated = ReferenceEquals(caught, error); }
             var record = Records().Last();
-            using var payload = JsonDocument.Parse(Details(record));
             var expected = error is InvalidDataException ? "Rejected" : "Failed";
-            check(propagated && Severity(record, "error") && payload.RootElement.GetProperty("Outcome").GetString() == expected,
+            check(propagated && Severity(record, "ERROR") && Value(Details(record), "Outcome") == expected,
                 $"Storage {expected} is an error and preserves the original exception");
         }
 
         var registry = new MemoryRegistry();
         var service = new RegistryInitializationService(registry);
         var result = service.Ensure();
-        check(result.Success && result.ErrorsEncountered == 0 && Severity(Records().Last(), "information")
+        check(result.Success && result.ErrorsEncountered == 0 && Severity(Records().Last(), "INFO")
             && Details(Records().Last()).Contains("errors=0"), "Successful synchronization summary is informational");
         registry.Invalid = true;
         var offset = Records().Length;
         result = service.Ensure();
         var findings = Records().Skip(offset).ToArray();
-        check(result.Success && result.InvalidValuesDetected == 1 && Severity(findings.Last(), "information")
-            && findings.Any(r => Details(r).StartsWith("invalid-value-preserved;") && Severity(r, "warning"))
+        check(result.Success && result.InvalidValuesDetected == 1 && Severity(findings.Last(), "INFO")
+            && findings.Any(r => Details(r).StartsWith("invalid-value-preserved;") && Severity(r, "WARN"))
             && registry.Invalid, "Invalid preserved value is a warning; errors=0 summary stays informational without changing the value");
         registry.Invalid = false; registry.Denied = true;
         offset = Records().Length;
         result = service.Ensure();
-        check(!result.Success && result.ErrorsEncountered > 0 && Severity(Records().Last(), "error")
-            && Records().Skip(offset).Any(r => Details(r).StartsWith("failure;") && Severity(r, "error")), "Genuine synchronization failures and summary are errors");
+        check(!result.Success && result.ErrorsEncountered > 0 && Severity(Records().Last(), "ERROR")
+            && Records().Skip(offset).Any(r => Details(r).StartsWith("failure;") && Severity(r, "ERROR")), "Genuine synchronization failures and summary are errors");
         registry.Denied = false; registry.SchemaDenied = true;
         result = service.Ensure();
-        check(!result.Success && result.ErrorsEncountered == 1 && Severity(Records().Last(), "error"),
+        check(!result.Success && result.ErrorsEncountered == 1 && Severity(Records().Last(), "ERROR"),
             "Schema metadata failure retains error severity even without a per-setting failure");
         check(registry.WriteCalls == 0, "Diagnostic fixtures never request settings writes or touch the Windows registry");
 
@@ -109,7 +116,7 @@ internal static class LoggingOutcomeTests
             Diagnostics.Log("ota", details, DiagnosticSeverity.Error);
             check(details.Contains("category=" + item.Category + ";") && details.Contains("install-callback-invoked=false")
                 && !details.Contains("PRIVATE") && !details.Contains("https:") && !details.Contains("Customer")
-                && Severity(Records().Last(), "error"), $"OTA {item.Category} diagnostics are sanitized and retain error severity");
+                && Severity(Records().Last(), "ERROR"), $"OTA {item.Category} diagnostics are sanitized and retain error severity");
         }
         check(OtaCheckDiagnostics.Format(OtaCheckStage.ManifestFetch, cases[1].Error).Contains("stage=response-validation; category=http-status; http-status=403;"),
             "HTTP status failures identify response validation and retain numeric status");
@@ -153,3 +160,7 @@ internal static class LoggingOutcomeTests
         { Requests++; return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)); }
     }
 }
+
+internal sealed record LogRecord(bool Matched, string Timestamp, string Severity, string SessionId, int ProcessId, string Component, string Message)
+{
+    }

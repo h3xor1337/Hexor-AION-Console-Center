@@ -15,6 +15,20 @@ internal static class Program
   if(args.Length==2&&args[0]=="--instance-child")return UpdateSessionTests.InstanceChild(args[1]);
   if(args.Length==1&&args[0]=="--update-session-only")return RunFocused(UpdateSessionTests.Run);
   if(args.Length==1&&args[0]=="--daily-registry-only")return RunFocused(DailyQuestRegistryTests.Run);
+  if(args.Length==1&&args[0]=="--lc-registry-only")return RunFocused(LcRegistryFeatureTests.Run);
+  if(args.Length==1&&args[0]=="--captcha-only")return RunFocused(CaptchaMonitorTests.Run);
+  if(args.Length==1&&args[0]=="--runtime-mcp-only")return RunFocused(RuntimeMcpClientTests.Run);
+  if(args.Length==1&&args[0]=="--game-ipc-only")return RunFocused(GameIpcTests.Run);
+  if(args.Length==1&&args[0]=="--captcha-solver-only")return RunFocused(CaptchaAutoSolverTests.Run);
+  if(args.Length==1&&args[0]=="--game-ipc-live")return RunFocused(GameIpcLiveTests.Run);
+  if(args.Length==1&&args[0]=="--visual-only")return RunFocused(VisualChallengeMonitorTests.Run);
+  if(args.Length==1&&args[0]=="--launcher-only")return RunFocused((_,check)=>LauncherProvenanceTests.Run(check));
+  if(args.Length==1&&args[0]=="--storage-audit-only")return RunFocused((root,check)=>
+  {
+   var branch="Software\\HexorTests\\"+Guid.NewGuid().ToString("N");
+   try { StorageAuditTests.Run(root,branch,check); }
+   finally { Registry.CurrentUser.DeleteSubKeyTree(branch,false); }
+  });
   if(args.Length==1&&args[0]=="--compatibility-only")return RunFocused((root,check)=>
   {
    var branch="Software\\HexorTests\\"+Guid.NewGuid().ToString("N");
@@ -87,6 +101,15 @@ internal static class Program
    TestCheckpoint.Run(nameof(RuntimeDisplayTests),()=>RuntimeDisplayTests.Run(root,reg,Assert),120);
    TestCheckpoint.Run(nameof(ReleaseReadinessTests),()=>ReleaseReadinessTests.Run(root,registryRoot,Assert),120);
    TestCheckpoint.Run(nameof(StorageAuditTests),()=>StorageAuditTests.Run(root,registryRoot,Assert),120);
+   TestCheckpoint.Run(nameof(LcRegistryFeatureTests),()=>LcRegistryFeatureTests.Run(root,Assert),120);
+   TestCheckpoint.Run(nameof(SharedSettingsSyncTests),()=>SharedSettingsSyncTests.Run(root,reg,Assert),120);
+   TestCheckpoint.Run(nameof(CaptchaMonitorTests),()=>CaptchaMonitorTests.Run(root,Assert),120);
+   TestCheckpoint.Run(nameof(RuntimeMcpClientTests),()=>RuntimeMcpClientTests.Run(root,Assert),120);
+   TestCheckpoint.Run(nameof(GameIpcTests),()=>GameIpcTests.Run(root,Assert),60);
+   TestCheckpoint.Run(nameof(CaptchaAutoSolverTests),()=>CaptchaAutoSolverTests.Run(root,Assert),60);
+   TestCheckpoint.Run(nameof(VisualChallengeMonitorTests),()=>VisualChallengeMonitorTests.Run(root,Assert),120);
+   TestCheckpoint.Run(nameof(LauncherProvenanceTests),()=>LauncherProvenanceTests.Run(Assert),120);
+   LcRegistryFeatureTests.SeedGathering(registryRoot);
    RunWpfRegression(root,json,reg);
    Console.WriteLine($"ALL {passed} CHECKS PASSED");return 0;
   }catch(Exception e){Console.Error.WriteLine(e);return 1;}
@@ -119,7 +142,7 @@ internal static class Program
   File.WriteAllText(Path.Combine(config,"machine.json"),Envelope(new()).ToJsonString());
   var json=new JsonConfigurationService(Path.Combine(root,"preferences.json"),new SettingsBackupService());json.Load();
   Environment.SetEnvironmentVariable("HEXOR_TEST_ARTIFACTS",Path.Combine(root,"artifacts"));
-  try{RunWpfRegression(root,json,new RegistrySettingsService(registryRoot));}
+  try{LcRegistryFeatureTests.SeedGathering(registryRoot);RunWpfRegression(root,json,new RegistrySettingsService(registryRoot));}
   finally{Environment.SetEnvironmentVariable("HEXOR_TEST_ARTIFACTS",null);Registry.CurrentUser.DeleteSubKeyTree(registryRoot,false);}
  }
  private static void RunWpfRegression(string root,IJsonConfigurationService json,IRegistrySettingsService reg)
@@ -132,7 +155,12 @@ internal static class Program
    {
     TestCheckpoint.Write("WPF: load production resources");app=TestCheckpoint.CreateApplication();
     var retainedFiles=Directory.GetFiles(Path.Combine(root,"verified","config"),"*.json").ToDictionary(p=>p,File.ReadAllBytes);
-    var window=new MainWindow(new MainViewModel(json,reg,new Hexor.Compatibility.LegionConfigurationService(Path.Combine(root,"verified"))),automaticallyCheckForUpdates:false);
+    var captchaLogs=Path.Combine(root,"wpf-captcha-fixture");
+    Directory.CreateDirectory(captchaLogs);
+    var captchaLog=Path.Combine(captchaLogs,"debug_20260101_000000.log");
+    File.WriteAllText(captchaLog,"[Main] fixture startup\n");
+    var captchaMonitor=new Hexor.Runtime.CaptchaMonitor([new Hexor.Runtime.CaptchaLogTailSource(captchaLogs)]);
+    var window=new MainWindow(new MainViewModel(json,reg,new Hexor.Compatibility.LegionConfigurationService(Path.Combine(root,"verified")),captchaMonitor:captchaMonitor),automaticallyCheckForUpdates:false);
     EventHandler? rendered=null;
     rendered=(_,_)=>{window.ContentRendered-=rendered;window.Dispatcher.BeginInvoke(async () =>
     {
@@ -140,29 +168,53 @@ internal static class Program
      {
       TestCheckpoint.Write("WPF: initial load");await window.InitialLoadCompleted;
       Assert(app.Windows.Count==1&&ReferenceEquals(app.Windows[0],window),"WPF test host opens only the fixture window without customer startup dialogs");
-      for(var i=0;i<4;i++){var tab=i;TestCheckpoint.Run("WPF: initial navigation "+tab,()=>{window.ShowPage(tab);window.UpdateLayout();});Assert(window.Content!=null,"WPF navigation page "+i);}
+      for(var i=0;i<10;i++){var tab=i;TestCheckpoint.Run("WPF: initial navigation "+tab,()=>{window.ShowPage(tab);window.UpdateLayout();});Assert(window.Content!=null,"WPF navigation page "+i);}
       window.ShowPage(1);window.UpdateLayout();
-      var auctionPrice=LogicalTreeHelper.FindLogicalNode(window,"AuctionPriceModeSelector") as System.Windows.Controls.ComboBox;
-      Assert(auctionPrice?.SelectedIndex==1,"Auto Auction selector displays the initialized Average registry value");
+      System.Windows.Controls.RadioButton Radio(string name)=>RuntimeDisplayTests.All<System.Windows.Controls.RadioButton>(window).Single(r=>r.Name==name);
+      Assert(Radio("AuctionPriceModeAverage").IsChecked==true,"Auto Auction radio displays the initialized Average registry value");
       window.Model.AuctionPriceMode=0;window.UpdateLayout();
-      Assert(auctionPrice?.SelectedIndex==0,"Auto Auction selector follows the saved Lowest registry value");
+      Assert(Radio("AuctionPriceModeLowest").IsChecked==true,"Auto Auction radio follows the saved Lowest registry value");
       window.Model.InitializeRegistryDefaults();window.UpdateLayout();
-      Assert(auctionPrice?.SelectedIndex==1&&window.Model.Toggles.Single(t=>t.Name=="AuctionAutoSell").Value==false,
+      Assert(Radio("AuctionPriceModeAverage").IsChecked==true&&window.Model.Toggles.Single(t=>t.Name=="AuctionAutoSell").Value==false,
        "Initialization refreshes bound Auto Auction controls to the actual OFF and Average values");
-      var layer=LogicalTreeHelper.FindLogicalNode(window,"AbyssLayerSelector") as System.Windows.Controls.ComboBox;
-      var dungeon=LogicalTreeHelper.FindLogicalNode(window,"PreferredDungeonSelector") as System.Windows.Controls.ComboBox;
-      Assert(layer!=null&&layer.Items.Cast<string>().SequenceEqual(new[]{"Lower","Middle"})&&layer.SelectedIndex==0
-       &&dungeon!=null&&dungeon.Items.Cast<string>().SequenceEqual(new[]{"Krao Cave","Draupnir Cave"})&&dungeon.SelectedIndex==0,
-       "Resource selectors show exact choices and initialized Lower / Krao Cave values");
-      layer!.SelectedIndex=1;dungeon!.SelectedIndex=1;window.UpdateLayout();
-      Assert(reg.Read("ResourceGrab","AbyssLayer")==23&&reg.Read("ResourceGrab","AutoDungeonPreferred")==1,
-       "Actual resource controls persist Middle 23 and Draupnir Cave 1");
+      var layerLower=Radio("AbyssLayerLower");var layerMiddle=Radio("AbyssLayerMiddle");
+      Assert(layerLower.IsChecked==true&&!layerMiddle.IsChecked==true,"Abyss layer radios show the saved Lower value");
+      layerMiddle.IsChecked=true;window.UpdateLayout();
+      Assert(reg.Read("ResourceGrab","AbyssLayer")==23,"Abyss layer radio persists Middle 23");
       window.Model.ReloadRegistry();window.UpdateLayout();
-      Assert(layer.SelectedIndex==1&&dungeon.SelectedIndex==1,"Resource selectors refresh from existing registry choices");
-      layer.SelectedIndex=0;dungeon.SelectedIndex=0;window.UpdateLayout();
-      Assert(reg.Read("ResourceGrab","AbyssLayer")==21&&reg.Read("ResourceGrab","AutoDungeonPreferred")==0,
-       "Actual resource controls persist Lower 21 and Krao Cave 0");
-      auctionPrice!.BringIntoView();window.UpdateLayout();
+      Assert(layerMiddle.IsChecked==true,"Abyss layer radios refresh from existing registry choices");
+      layerLower.IsChecked=true;window.UpdateLayout();
+      Assert(reg.Read("ResourceGrab","AbyssLayer")==21,"Abyss layer radio persists Lower 21");
+      window.ShowPage(2);window.UpdateLayout();
+      var dungeonNormal=Radio("DungeonModeNormal");var dungeonConquest=Radio("DungeonModeConquest");
+      var dungeonList=LogicalTreeHelper.FindLogicalNode(window,"DungeonPriorityList") as System.Windows.Controls.ItemsControl;
+      Assert(dungeonNormal.IsChecked==true&&!dungeonConquest.IsChecked==true
+       &&dungeonList!=null&&window.Model.DungeonPriority.Count==4
+       &&window.Model.DungeonPriority.Select(r=>r.MapId).SequenceEqual(new[]{600001,600032,600031,600012})
+       &&window.Model.DungeonPriority.Count(r=>r.Enabled)==3,
+       "Dungeon radios and priority show exact choices and the vendor-default order (Uruguru Cave disabled)");
+      dungeonConquest!.IsChecked=true;window.UpdateLayout();
+      Assert(reg.Read("ResourceGrab","AutoDungeonMode")==1,"Dungeon mode radio persists Conquest 1");
+      window.UpdateLayout();
+      Assert(dungeonList!.Items.Count==4&&window.Model.DungeonPriority.All(r=>!string.IsNullOrEmpty(r.Label)&&r.Ordinal>=1&&r.Ordinal<=4),
+       "Dungeon priority rows keep their own numbered label element beside each toggle");
+      window.Model.ReloadRegistry();window.UpdateLayout();
+      Assert(dungeonConquest.IsChecked==true,"Dungeon mode radios refresh from existing registry choices");
+      dungeonNormal.IsChecked=true;window.UpdateLayout();
+      Assert(reg.Read("ResourceGrab","AutoDungeonMode")==0,"Dungeon mode radio persists Normal 0");
+      var uruguru=window.Model.DungeonPriority.First(r=>r.MapId==600012);uruguru.Enabled=true;window.UpdateLayout();
+      var priority=(string?)reg.ReadString("ResourceGrab","AutoDungeonPriority");
+      Assert(priority!=null&&priority.Split('\n').SequenceEqual(new[]{"1\t600001","1\t600032","1\t600031","1\t600012"}),
+       "Dungeon priority edits write the vendor REG_SZ format in the current row order");
+      window.Model.MoveDungeonPriority(600012,-1);window.UpdateLayout();
+      priority=(string?)reg.ReadString("ResourceGrab","AutoDungeonPriority");
+      Assert(priority!=null&&priority.Split('\n').Skip(2).First()=="1\t600012","Dungeon priority reorder writes the moved row one slot up");
+      window.Model.ResetDungeonPriority();window.UpdateLayout();
+      priority=(string?)reg.ReadString("ResourceGrab","AutoDungeonPriority");
+      Assert(priority!=null&&priority.Split('\n').SequenceEqual(new[]{"1\t600001","1\t600032","1\t600031","0\t600012"}),
+       "Reset Default restores the vendor default priority and selection");
+      window.ShowPage(1);window.UpdateLayout();
+      Radio("AuctionPriceModeAverage").BringIntoView();window.UpdateLayout();
       var resourceImage=new RenderTargetBitmap((int)window.ActualWidth,(int)window.ActualHeight,96,96,PixelFormats.Pbgra32);resourceImage.Render(window);
       var resourceEncoder=new PngBitmapEncoder();resourceEncoder.Frames.Add(BitmapFrame.Create(resourceImage));
       Directory.CreateDirectory(Path.Combine(root,"artifacts"));using(var stream=File.Create(Path.Combine(root,"artifacts","resource-selectors.png")))resourceEncoder.Save(stream);
@@ -171,7 +223,8 @@ internal static class Program
       var releaseScreenshot=Environment.GetEnvironmentVariable("HEXOR_CAPTURE_RELEASE_SCREENSHOT")=="1"?Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(),"output","validation-1.0.10","ui-general.png")):Path.Combine(root,"artifacts","ui-general.png");
       TestCheckpoint.Write("WPF: general screenshot render/save");Directory.CreateDirectory(Path.GetDirectoryName(releaseScreenshot)!);var generalImage=new RenderTargetBitmap((int)window.ActualWidth,(int)window.ActualHeight,96,96,PixelFormats.Pbgra32);generalImage.Render(window);var generalEncoder=new PngBitmapEncoder();generalEncoder.Frames.Add(BitmapFrame.Create(generalImage));using(var stream=File.Create(releaseScreenshot))generalEncoder.Save(stream);
       TestCheckpoint.Write("WPF: interface screenshot render/save");window.ShowPage(1);window.UpdateLayout();var image=new RenderTargetBitmap((int)window.ActualWidth,(int)window.ActualHeight,96,96,PixelFormats.Pbgra32);image.Render(window);var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(image));var screenshot=Path.Combine(root,"artifacts","interface-preview.png");Directory.CreateDirectory(Path.GetDirectoryName(screenshot)!);using(var stream=File.Create(screenshot))encoder.Save(stream);
-      RuntimeDisplayTests.CloseThroughTitleBar(window,Assert);Assert(retainedFiles.All(p=>File.ReadAllBytes(p.Key).SequenceEqual(p.Value)),"Four-tab startup and navigation preserve all original configuration documents");completed.TrySetResult(null);
+      await CaptchaMonitorTests.RunWpfAsync(window,captchaLog,Assert);
+      RuntimeDisplayTests.CloseThroughTitleBar(window,Assert);Assert(retainedFiles.All(p=>File.ReadAllBytes(p.Key).SequenceEqual(p.Value)),"Startup and navigation preserve all original configuration documents");completed.TrySetResult(null);
      }
      catch(Exception e){completed.TrySetResult(e);app.Shutdown(1);}
     },System.Windows.Threading.DispatcherPriority.Loaded);};

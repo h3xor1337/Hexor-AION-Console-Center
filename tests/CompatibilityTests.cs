@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Text;
 using System.Text.Json.Nodes;
 using Hexor;
@@ -57,7 +57,7 @@ internal static class CompatibilityTests
         check(File.ReadAllBytes(path).SequenceEqual(externalBytes), "Conflict preserves external edits");
         expected = adapter.Read();
         Throws<InvalidDataException>(() => adapter.SaveScalars(expected, new Dictionary<string, string> { ["UnverifiedCommand"] = "1" }), "Unknown scalar writes rejected");
-        Throws<InvalidDataException>(() => adapter.SaveScalars(expected, new Dictionary<string, string> { ["AutoTask_Race"] = "1" }), "Unresolved class/race controls cannot write raw numbers");
+        Throws<InvalidDataException>(() => adapter.SaveScalars(expected, new Dictionary<string, string> { ["AutoTask_Race"] = "0" }), "Unsupported race numbers are rejected");
         Throws<InvalidDataException>(() => adapter.SaveScalars(expected, new Dictionary<string, string> { ["GameLanguage"] = "English" }), "Display language names cannot leak into original schema");
         Throws<InvalidDataException>(() => adapter.SaveScalars(expected, new Dictionary<string, string> { ["AutoTask_ClearSide"] = "true" }), "AutoTask requires 0/1 strings");
 
@@ -145,7 +145,7 @@ internal static class CompatibilityTests
         session.SaveAutoTask("SwitchToGatherAfterTasks", false);
         check(adapter.Read().Value("AutoTask_GatherAfterComplete") == "0" && registry.Read("AutoTask", "SwitchToGatherAfterTasks") == 0, "AutoTask writes JSON string and matching registry DWORD");
         check(adapter.Read().Value("UserLanguage") == "ko-KR" && registry.Read("AutoTask", "CharacterJob") == 777, "AutoTask mirrors preserve unrelated JSON and unknown class value");
-        Throws<InvalidDataException>(() => session.SaveAutoTask("CharacterJob", true), "AutoTask session refuses unresolved enum writes");
+        Throws<InvalidDataException>(() => session.SaveAutoTask("CharacterJob", true), "AutoTask boolean editor refuses class writes");
         registry.WriteVerified("AutoTask", "AutoDailyQuests", 1);
         check(registry.Read("AutoTask", "AutoDailyQuests") == 1, "Daily quests writes and verifies its independent DWORD");
         var failedMirror = new VerifiedSettingsSession(adapter, new DeniedRegistry());
@@ -156,6 +156,15 @@ internal static class CompatibilityTests
         check(registry.Read("AutoTask", "CharacterRace") == 2 && registry.Read("AutoTask", "CharacterJob") == 777,
             "Explicit raw mirror copies verified numeric default without interpreting or replacing unknown class values");
         Throws<InvalidDataException>(() => registry.MirrorAutoTaskNumber("CharacterJob", 1), "Numeric mirror refuses to overwrite an unknown existing class number");
+        Throws<InvalidDataException>(() => session.SaveAutoTaskNumber("CharacterJob", 8), "Class editor preserves unknown registry encoding");
+        session.SaveAutoTaskNumber("CharacterRace", 1);
+        check(adapter.Read().Value("AutoTask_Race") == "1" && registry.Read("AutoTask", "CharacterRace") == 1,
+            "Verified race choice persists to both stores");
+        var verifiedClass = adapter.SaveScalars(adapter.Read(), new Dictionary<string, string> { ["AutoTask_Job"] = "8" });
+        check(verifiedClass.Value("AutoTask_Job") == "8", "Verified class uses the installed wire value");
+        Throws<InvalidDataException>(() => adapter.SaveScalars(verifiedClass,
+            new Dictionary<string, string> { ["AutoTask_Job"] = "9" }), "Unknown class choice is rejected");
+        Throws<InvalidDataException>(() => session.SaveAutoTaskNumber("CharacterRace", 0), "Unknown race choice is rejected");
         Throws<InvalidDataException>(() => registry.WriteVerified("MiniGame", "AutoEnter", 1), "Unsupported registry data type cannot be overwritten by boolean writes");
         Throws<InvalidDataException>(() => registry.WriteVerified("Enhance", "AutoEnchantMaxPower", 1099), "Enhancement cap below verified range rejected");
         Throws<InvalidDataException>(() => registry.WriteVerified("Enhance", "AutoEnchantMaxPower", 1501), "Enhancement cap above verified range rejected");
@@ -181,8 +190,25 @@ internal static class CompatibilityTests
         check(adapter.Read().StoredWorkflow.Steps[0].Preserved["FutureStep"]?["unknown"]?.GetValue<bool>() == true
             && adapter.Read().StoredWorkflow.Steps[1].Preserved["FutureStep"]?["unknown"]?.GetValue<bool>() == true,
             "Duplicating an instruction preserves extension fields in both copies");
+        var workflowExport = Path.Combine(root, "workflow-export.json");
+        var afterApply = File.ReadAllBytes(path);
+        vm.ExportWorkflow(workflowExport);
+        check(WorkflowPlan.Read(JsonNode.Parse(File.ReadAllText(workflowExport))!.AsObject()).Finish == CompletionAction.NextAccount,
+            "Workflow export contains the draft and its completion action");
+        vm.LoadDefaultWorkflow();
+        check(vm.Preferences.AfterFinish == "GatherOnCharacter", "Default sequence replaces only the draft");
+        vm.ImportWorkflow(workflowExport);
+        check(vm.Preferences.AfterFinish == "NextAccount" && File.ReadAllBytes(path).SequenceEqual(afterApply),
+            "Workflow round trip stages changes without touching provider settings");
+        vm.ExportWorkflow(path);
+        check(File.ReadAllBytes(path).SequenceEqual(afterApply), "Export refuses to overwrite an existing settings file");
+        var badWorkflow = Path.Combine(root, "invalid-workflow.json");
+        File.WriteAllText(badWorkflow, "{\"Workflow\":false}");
+        vm.ImportWorkflow(badWorkflow);
+        check(vm.Preferences.AfterFinish == "NextAccount" && vm.Status.Contains("Choose a workflow"),
+            "Invalid workflow import leaves the draft intact");
         vm.MaxAccounts = "4"; vm.WorkMin = "50"; vm.WorkMax = "70"; vm.RestMin = "5"; vm.RestMax = "10"; vm.SaveSchedule();
-        check(ScheduleSettings.Read(adapter.Read()).Accounts == 4 && vm.Status.Contains("not notified"), "Schedule UI persists while explicitly reporting no live notification");
+        check(ScheduleSettings.Read(adapter.Read()).Accounts == 4 && vm.Status.Contains("persisted and verified"), "Schedule UI persists while reporting when the saved schedule applies");
         check(vm.SetGameLanguage("English") && adapter.Read().Value("GameLanguage") == "en-US", "General game-language UI persists verified culture identifier");
         vm.ReloadConfiguration();
         check(File.ReadAllBytes(path).Length > 0 && vm.Preferences.Instructions.All(i => !string.IsNullOrWhiteSpace(i.Id)), "Explicit reload retains persisted instruction IDs");

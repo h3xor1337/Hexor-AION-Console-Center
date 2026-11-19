@@ -8,7 +8,7 @@ adaptive
 
 ## Users
 
-Players use Hexor Control Center on a Windows desktop to review and persist supported AION automation settings. The product is used alongside, but does not remotely control, the game and original vendor updater.
+Players use Hexor Control Center on a Windows desktop to review and persist supported AION automation settings. The product is used alongside the game and original vendor updater; it observes the vendor runtime bridge and issues only explicit, operator-initiated session controls. It does not remotely control the game, never starts automation, and never manages game accounts.
 
 ## Product Purpose
 
@@ -20,7 +20,7 @@ Hexor is a safe settings control center: it presents only verified storage-backe
 
 ## Operating Context
 
-The interface is a Windows WPF application with four settings areas, diagnostics, signed GitHub self-update support, and an on-demand vendor updater handoff.
+The interface is a Windows WPF application with seven settings areas, diagnostics, signed GitHub self-update support, and an on-demand vendor updater handoff.
 
 ## Capabilities and Constraints
 

@@ -176,6 +176,11 @@ function Invoke-HexorPublicAssetVerification {
 function Publish-HexorGitHubRelease {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$GitHubRepository, [Parameter(Mandatory)][string]$Version, [Parameter(Mandatory)][string]$ReleaseDirectory, [Parameter(Mandatory)][string]$Root)
+    if ($GitHubRepository -ceq 'h3xor1337/hexor-updates' -and [version]$Version -ge [version]'1.0.14') {
+        if ($Version -cne '1.0.14') { throw 'Qualification policy is approved for v1.0.14 only.' }
+        $gateEvidence = Join-Path $Root ('.build/publication-gate-' + [guid]::NewGuid().ToString('N'))
+        & (Join-Path $Root 'scripts/Test-HexorConsoleRelease.ps1') -Phase Publication -ReleaseDirectory $ReleaseDirectory -ResultDirectory $gateEvidence
+    }
     $trustPath = Join-Path $Root 'Updates\trust.json'
     $script:HexorPublicationState = [pscustomobject]@{ DraftCreated = $false; UploadedAssets = [Collections.Generic.List[string]]::new(); ReleasePublished = $false; ManifestCommitted = $false }
     $trust = Get-Content -Raw -LiteralPath $trustPath | ConvertFrom-Json

@@ -227,14 +227,12 @@ internal static class VendorUpdaterCancellationTests
             {
                 try
                 {
-                    using var document = JsonDocument.Parse(line);
-                    var value = document.RootElement;
-                    if (!value.TryGetProperty("timestamp", out var timestamp) || !timestamp.TryGetDateTimeOffset(out var observed) || observed < since
-                        || !value.TryGetProperty("sessionId", out var session) || session.GetString() != Diagnostics.SessionId
-                        || !value.TryGetProperty("area", out var area) || !value.TryGetProperty("eventName", out var eventName)) continue;
-                    if (area.GetString() is "updater-monitor" or "updater-handoff") events.Add(eventName.GetString() ?? "");
+                    // Plain-text record: 2026-11-19 17:32:41.123 +08:00 [INFO] [sessionId] [pid 1234] area: message
+                    var record = VendorUpdaterLogRecord.Parse(line);
+                    if (record == null || DateTimeOffset.Parse(record.Timestamp) < since || record.SessionId != Diagnostics.SessionId) continue;
+                    if (record.Component is "updater-monitor" or "updater-handoff") events.Add(record.Message);
                 }
-                catch (JsonException) { }
+                catch (FormatException) { }
             }
         }
         return events.ToArray();
@@ -327,5 +325,25 @@ internal static class VendorUpdaterCancellationTests
         private readonly Dictionary<(string, string), int> values = new();
         public int? Read(string section, string name) => values.TryGetValue((section, name), out var value) ? value : null;
         public void WriteVerified(string section, string name, int value) => values[(section, name)] = value;
+    }
+}
+
+// Parser for the plain-text diagnostic record format used by Diagnostics:
+// 2026-11-19 17:32:41.123 +08:00 [INFO] [sessionId] [pid 1234] component: message
+internal sealed record VendorUpdaterLogRecord(string Timestamp, string Severity, string SessionId, int ProcessId, string Component, string Message)
+{
+    private static readonly System.Text.RegularExpressions.Regex Pattern = new(
+        @"^(?<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} [+-]\d{2}:\d{2}) \[(?<severity>INFO|WARN|ERROR)\] \[(?<sessionId>[0-9a-f]{32})\] \[pid (?<processId>\d+)\] (?<component>[^:]+): (?<message>.*)$",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    public static VendorUpdaterLogRecord? Parse(string line)
+    {
+        var match = Pattern.Match(line);
+        return match.Success ? new VendorUpdaterLogRecord(
+            match.Groups["timestamp"].Value,
+            match.Groups["severity"].Value,
+            match.Groups["sessionId"].Value,
+            int.Parse(match.Groups["processId"].Value),
+            match.Groups["component"].Value,
+            match.Groups["message"].Value) : null;
     }
 }

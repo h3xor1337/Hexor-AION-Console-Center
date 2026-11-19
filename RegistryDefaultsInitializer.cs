@@ -24,7 +24,7 @@ public sealed record RegistrySynchronizationResult(int SettingsChecked, int Miss
 // Reference exports establish names and types only; every newly introduced Boolean initializes OFF.
 public static class LegionCommanderRegistrySchema
 {
-    public const int Version = 3;
+    public const int Version = 4;
     public static IReadOnlyList<RegistryDefinition> Definitions { get; } = Array.AsReadOnly(new[]
     {
         Bool("AutoTask", "ClearSideQuestsBeforeDungeon", "Auto Task / Clear side quests"),
@@ -48,7 +48,7 @@ public static class LegionCommanderRegistrySchema
         Bool("ResourceGrab", "GuardianLogoutAvoidance", "Resource Gathering / Guardian logout avoidance"),
         Bool("ResourceGrab", "AuctionAutoSell", "Auto Auction / Auto sell") with { ResetOnStartup = true },
         Number("ResourceGrab", "AuctionPriceMode", 1, 0, 1, "Auto Auction / Price mode") with { ResetOnStartup = true },
-        Number("ResourceGrab", "AutoDungeonPreferred", 0, 0, 1, "Auto Dungeon / Preferred dungeon")
+        Number("ResourceGrab", "AutoDungeonMode", 0, 0, 1, "Auto Dungeon / Dungeon mode")
     });
     private static RegistryDefinition Bool(string section, string name, string binding, int value = 0) => new(section, name, RegistrySettingType.BooleanDWord, value, 0, 1, binding, Version, RegistryOwnership.HexorSupported);
     private static RegistryDefinition Number(string section, string name, int value, int minimum, int maximum, string binding) => new(section, name, RegistrySettingType.IntegerDWord, value, minimum, maximum, binding, Version, RegistryOwnership.HexorSupported);

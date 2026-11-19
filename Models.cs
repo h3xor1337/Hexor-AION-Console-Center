@@ -18,7 +18,8 @@ public sealed class Instruction : Observable
 {
  private bool enabled=true; private InstructionType type;
  public bool Enabled {get=>enabled;set=>Set(ref enabled,value);}
- public InstructionType Type {get=>type;set=>Set(ref type,value);}
+ public InstructionType Type { get => type; set { if (Set(ref type, value)) Changed(nameof(ActivityLabel)); } }
+ [JsonIgnore]public string ActivityLabel => InstructionPresentation.Options.FirstOrDefault(option => option.Value == Type)?.Label ?? Type.ToString();
  private int sequenceNumber;
  [JsonIgnore]public int SequenceNumber {get=>sequenceNumber;set=>Set(ref sequenceNumber,value);}
  public int DurationMinutes {get;set;}=30;
@@ -48,12 +49,21 @@ public sealed class Preferences
  public bool ScheduleEnabled {get;set;} public int MaxAccounts {get;set;}=1;
  public int WorkMin {get;set;}=60;public int WorkMax {get;set;}=120;
  public int RestMin {get;set;}=10;public int RestMax {get;set;}=20;
+ public bool CaptchaNotifications {get;set;}=true;
+ public bool CaptchaPauseApplies {get;set;}
+ public bool CaptchaResumeConfirmation {get;set;}
+ public bool VisualDetectionEnabled {get;set;}
+ public bool VisualDetectionSound {get;set;}=true;
+ public int VisualDetectionSensitivity {get;set;}=50;
+ public int VisualDetectionIntervalSeconds {get;set;}=4;
+ public string? VisualDetectionTemplateFolder {get;set;}
  [JsonExtensionData]public Dictionary<string,JsonElement>? Extra {get;set;}
 }
 public record Detection(string Character,string Server,string Client,string Process,string? Installation)
 {
  public int? ProcessId {get;init;}
  public string? ExecutablePath {get;init;}
+ public string? Launcher {get;init;}
  public IReadOnlyList<Runtime.GameProcessObservation> Processes {get;init;}=[];
  public DateTimeOffset? ObservedAt {get;init;}
  public string CharacterSource {get;init;}="Unavailable: no authorized live source.";

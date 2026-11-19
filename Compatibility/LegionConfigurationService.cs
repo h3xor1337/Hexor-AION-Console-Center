@@ -213,7 +213,7 @@ public sealed class LegionConfigurationService : ILegionConfigurationService
     }
 
     private static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
-    private static void RejectDuplicateProperties(JsonElement node)
+    internal static void RejectDuplicateProperties(JsonElement node)
     {
         if (node.ValueKind == JsonValueKind.Object)
         {
@@ -231,8 +231,12 @@ public sealed class LegionConfigurationService : ILegionConfigurationService
             || key is "UserLanguage" && value is not ("en-US" or "zh-CN" or "ko-KR"))
             throw new InvalidDataException("Unsupported language identifier.");
         if (key is "AutoTask_Race" or "AutoTask_Job")
-            throw new InvalidDataException("Named race and class mappings remain unresolved; values are read-only.");
-        if (key.StartsWith("AutoTask_", StringComparison.Ordinal) && value is not ("0" or "1"))
+        {
+            var options = key == "AutoTask_Race" ? LegionCommanderFeatureSettings.Races : LegionCommanderFeatureSettings.Jobs;
+            if (!options.Any(option => value == option.Value.ToString(CultureInfo.InvariantCulture)))
+                throw new InvalidDataException("Unsupported character default value.");
+        }
+        else if (key.StartsWith("AutoTask_", StringComparison.Ordinal) && value is not ("0" or "1"))
             throw new InvalidDataException("AutoTask booleans use 0/1 strings.");
         if (key == "WorkSchedule_Enabled" && value is not ("true" or "false"))
             throw new InvalidDataException("Schedule boolean must be a true/false string.");

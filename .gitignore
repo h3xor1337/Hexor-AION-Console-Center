@@ -54,3 +54,4 @@ machine.json
 /HEXOR_VERIFIED_SETTINGS_MAPPING.md
 /docs/*
 !/docs/LC_REGISTRY_UPDATE.md
+!/docs/RELEASE-NOTES-1.0.14.md

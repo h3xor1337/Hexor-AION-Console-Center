@@ -229,53 +229,124 @@ internal static class RuntimeDisplayTests
             "Customer window is centered and supports native resize/maximize");
         check(window.MinWidth>=920 && window.MinHeight>=620,"Responsive shell has safe minimum dimensions");
         var nav=Find<StackPanel>(window,"SidebarNavigation")!;
-        var expected=new[]{"General","Auto Task","Character Enhancement","Shugo Festival"};
-        check(nav.Children.Count==4 && nav.Children.Cast<Button>().SelectMany(b=>All<TextBlock>(b)).Select(t=>t.Text)
-            .SequenceEqual(expected),"Exactly four customer navigation tabs");
+        var expected=new[]{"General","Resource Grab","Auto Dungeon","Auto Task","Character Enhancement","Daily Activities","Work Schedule","Shugo Festival","CAPTCHA","Live Control"};
+        check(nav.Children.Count==expected.Length && nav.Children.Cast<Button>().SelectMany(b=>All<TextBlock>(b)).Select(t=>t.Text)
+            .SequenceEqual(expected),"Customer navigation includes both LegionCommander editors and live control");
         check(nav.Children.Cast<Button>().SelectMany(b=>All<TextBlock>(b)).All(t=>t.TextWrapping==TextWrapping.NoWrap),"Sidebar navigation labels remain on one line");
         var ids=vm.Preferences.Instructions.Select(i=>i.Id).ToArray();
         var workflow=System.Text.Json.JsonSerializer.Serialize(vm.Preferences.Instructions);
-        for(int tab=0;tab<4;tab++)
+        for(int tab=0;tab<expected.Length;tab++)
         {
             Navigate(window,tab,"customer controls");
             var texts=All<TextBlock>(window).Select(t=>t.Text).ToArray();
-            check(!texts.Any(t=>t.Contains("Instruction sequence")||t.Contains("Work Schedule")||t.Contains("Stored CharacterJob")||t.Contains("Unverified enum")),"Removed features absent from customer tab "+tab);
+            check(!texts.Any(t=>t.Contains("Stored CharacterJob")||t.Contains("Unverified enum")),"No raw identity labels on customer tab "+tab);
+            check(!All<Button>(window).Any(b=>Equals(b.Content,"Add account")),"Account creation absent from tab "+tab);
             check(!All<Button>(window).Any(b=>b.Content is string text && (text.StartsWith("Start automation")||text.StartsWith("Stop automation"))),"No remote control buttons on tab "+tab);
             var scroll=Find<ScrollViewer>(window,"PageScroll")!;
             check(scroll.ActualHeight>100 && scroll.HorizontalScrollBarVisibility==ScrollBarVisibility.Disabled && scroll.ExtentWidth<=scroll.ViewportWidth+1,
                 "Tab has bounded internal vertical scrolling without horizontal overflow "+tab);
-            var controls=All<Control>(window).Where(c=>c is TextBox or ComboBox).ToArray();
+            var controls=All<Control>(window).Where(c=>c.IsVisible && c is (TextBox or ComboBox)).ToArray();
             check(controls.All(c=>c.ActualHeight>=39 && c.ActualWidth>0),"Inputs have consistent usable minimum heights on tab "+tab);
         }
-        Navigate(window,1,"Auto Task",pump:false);
+        Navigate(window,5,"Daily Activities");
+        var steps = Find<ListBox>(window,"DailyWorkflowSteps")!;
+        check(steps.Items.Count==vm.Preferences.Instructions.Count && Find<Button>(window,"ApplyDailyWorkflow")?.Command==vm.SaveDailyCommand,
+            "Daily Activities binds the working sequence and verified apply command");
+        var previousWidth=window.Width;
+        window.Width=window.MinWidth;
+        window.UpdateLayout();
+        var narrowPage=Find<ScrollViewer>(window,"PageScroll")!;
+        check(narrowPage.ExtentWidth<=narrowPage.ViewportWidth+1,
+            "The two-column workflow editor fits the minimum supported width");
+        CaptureFeature(window,"daily-activities");
+        window.Width=previousWidth;
+        Navigate(window,6,"Work Schedule");
+        check(Find<Button>(window,"SaveWorkSchedule")?.Command==vm.SaveScheduleCommand,
+            "Work Schedule binds the verified schedule command");
+        CaptureFeature(window,"work-schedule");
+        Navigate(window,3,"Auto Task",pump:false);
         check(All<CheckBox>(window).Select(c=>c.DataContext).OfType<RegistryToggle>().Where(t=>t.Section=="AutoTask").Select(t=>t.Name).SequenceEqual(new[]{"ClearSideQuestsBeforeDungeon","ExploreCavesBeforeDungeon","SwitchToGatherAfterTasks","AutoDailyQuests"}),"Auto Task exposes each of the four registry behavior options exactly once");
         var daily=All<CheckBox>(window).Single(c=>c.DataContext is RegistryToggle t&&t.Name=="AutoDailyQuests");
-        check(daily.IsEnabled&&daily.Style==Application.Current.FindResource("ToggleSwitchStyle"),"Daily quests uses the enabled Hexor toggle design");
+        check(daily.IsEnabled,"Daily quests uses an enabled checkbox control");
         daily.IsChecked=true;window.UpdateLayout();
         check(vm.Registry.Read("AutoTask","AutoDailyQuests")==1,"Actual daily quest control writes DWORD ON");
         daily.IsChecked=false;window.UpdateLayout();
         check(vm.Registry.Read("AutoTask","AutoDailyQuests")==0,"Actual daily quest control writes DWORD OFF");
-        check(All<TextBlock>(window).Any(t=>t.Text.StartsWith("Character race (DWORD):"))&&All<TextBlock>(window).Any(t=>t.Text.StartsWith("Character job (DWORD):")),"Character identity values are visible without enum selectors");
-        check(All<CheckBox>(window).Select(c=>c.DataContext).OfType<RegistryToggle>().Where(t=>t.Section=="ResourceGrab").Select(t=>t.Name).SequenceEqual(new[]{"AutoEnterAbyss","AbyssCounterAttack","GuardianLogoutAvoidance","AuctionAutoSell"}),"Resource Gathering and Auto Auction expose each verified Boolean exactly once");
-        check(All<ComboBox>(window).Select(c=>c.Name).SequenceEqual(new[]{"AbyssLayerSelector","PreferredDungeonSelector","AuctionPriceModeSelector"}),"Auto Task has only verified resource and auction selectors with no race or class selectors");
+        var raceSelector = Find<ComboBox>(window,"CharacterRaceSelector")!;
+        var classSelector = Find<ComboBox>(window,"CharacterJobSelector")!;
+        check(raceSelector.Items.Cast<object>().Select(item=>item.ToString()).SequenceEqual(new[]{"Elyos","Asmodian"})
+            && classSelector.Items.Count==9 && classSelector.Items[8].ToString()=="Chanter",
+            "Race and class show the installed LegionCommander mappings");
+        check(All<ComboBox>(window).Select(c=>c.Name).SequenceEqual(new[]{"CharacterRaceSelector","CharacterJobSelector"}),"Auto Task exposes the verified character-default selectors");
+
+        Navigate(window,1,"Resource Grab",pump:false);
+        check(All<CheckBox>(window).Select(c=>c.DataContext).OfType<RegistryToggle>().Where(t=>t.Section=="ResourceGrab").Select(t=>t.Name).SequenceEqual(new[]{"AutoEnterAbyss","AbyssCounterAttack","GatherQualityFilterEnabled","GatherIgnoreAether","GuardianLogoutAvoidance","AuctionAutoSell"}),"Resource Grab exposes each verified Boolean exactly once");
+        foreach(var name in new[]{"GatherQualityFilterEnabled","GatherIgnoreAether"})
+        {
+            var toggle=All<CheckBox>(window).Single(c=>c.DataContext is RegistryToggle t&&t.Name==name);
+            toggle.IsChecked=true;window.UpdateLayout();
+            check(vm.Registry.Read("ResourceGrab",name)==1,"Actual resource toggle writes exact DWORD: "+name);
+            toggle.IsChecked=false;window.UpdateLayout();
+            check(vm.Registry.Read("ResourceGrab",name)==0,"Actual resource toggle persists OFF: "+name);
+        }
+        var gatheringList=Find<ItemsControl>(window,"GatheringResources")!;
+        var gatheringScroll=Find<ScrollViewer>(window,"GatheringResourceScroll")!;
+        check(gatheringList.Items.Count==24&&gatheringScroll.MaxHeight==320&&gatheringScroll.HorizontalScrollBarVisibility==ScrollBarVisibility.Disabled,"Gathering renders all 24 resources in a bounded scrollable panel");
+        var firstResource=All<CheckBox>(window).Single(c=>c.DataContext is GatheringResourceViewModel row&&row.Identifier=="隱藏背包");
+        var originalGathering=vm.Registry.ReadGathering();firstResource.IsChecked=false;window.UpdateLayout();
+        check(vm.Registry.ReadGathering().Targets.Value=="0"+originalGathering.Targets.Value![1..],"Actual gathering toggle changes only its own original Chinese flag entry");
+        firstResource.IsChecked=true;window.UpdateLayout();
+        check(vm.Registry.ReadGathering()==originalGathering,"Actual gathering toggle round-trips the saved Unicode REG_SZ exactly");
+        var qualityWhite=All<RadioButton>(window).Single(r=>r.Name=="GatherQualityWhite");
+        var qualityGreen=All<RadioButton>(window).Single(r=>r.Name=="GatherQualityGreen");
+        var qualityBlue=All<RadioButton>(window).Single(r=>r.Name=="GatherQualityBlue");
+        check(qualityWhite.Content.ToString()=="White"&&qualityGreen.Content.ToString()=="Green"&&qualityBlue.Content.ToString()=="Blue","Quality labels match the installed mappings");
+        qualityGreen.IsChecked=true;window.UpdateLayout();
+        Find<Button>(window,"ApplyGatherQualityLevel")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));window.UpdateLayout();
+        check(vm.Registry.Read("ResourceGrab","GatherQualityFilterLevel")==2,"Actual quality input and Apply button persist a verified numeric DWORD");
+        qualityWhite.IsChecked=true;Find<Button>(window,"ApplyGatherQualityLevel")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        gatheringScroll.BringIntoView();window.UpdateLayout();Pump();
+        check(gatheringScroll.ExtentWidth<=gatheringScroll.ViewportWidth+1&&gatheringScroll.ScrollableHeight>0,"Long English resource names wrap without horizontal overflow and all resources remain reachable");
+        CaptureFeature(window,"gathering-resources");
         check(All<CheckBox>(window).Select(c=>c.DataContext).OfType<RegistryToggle>().Any(t=>t.Name=="AbyssCounterAttack"&&t.Label=="Attack Nearby Players")
             && All<CheckBox>(window).Select(c=>c.DataContext).OfType<RegistryToggle>().Any(t=>t.Name=="GuardianLogoutAvoidance"&&t.Label=="Avoid Captcha System by Logging out/in"),"Resource toggle labels match the release wording exactly");
         check(!All<Button>(window).Any(b=>b.Content is "Show Updater")
             && All<Button>(window).Any(b=>b.Content is "Open AION Updater"),"Only Open AION Updater remains available; Show Updater is removed");
-        TestCheckpoint.Write("WPF: enhancement fixture cap save");vm.UpgradeMaxBattlePowerK="100";vm.SaveUpgradeMaxBattlePowerK();vm.Status="Ready. Choose a setting to get started.";Navigate(window,2,"enhancement",pump:false);
+        TestCheckpoint.Write("WPF: enhancement fixture cap save");vm.UpgradeMaxBattlePowerK="100";vm.SaveUpgradeMaxBattlePowerK();vm.Status="Ready. Choose a setting to get started.";Navigate(window,4,"enhancement",pump:false);
         var enhancementSliders=All<Slider>(window).ToArray();var enhancementChecks=All<CheckBox>(window).ToArray();
-        check(enhancementChecks.Count(c=>c.DataContext is RegistryToggle)==8
+        check(enhancementChecks.Count(c=>c.DataContext is RegistryToggle)==10
             && enhancementSliders.Any(s=>s.Name=="AutoEquipCombatPowerSlider"&&s.Minimum==1&&s.Maximum==100)
             && enhancementSliders.Any(s=>s.Name=="AutoEnchantMaxPowerSlider"&&s.Minimum==1100&&s.Maximum==1500)
-            && vm.Toggles.Where(t=>t.Section=="Enhance").Select(t=>t.Name).OrderBy(n=>n).SequenceEqual(new[]{"AutoAwakenEnabled","AutoBuyOdEnergy","AutoBuyReviveStone","AutoDailyWaveEnabled","AutoDungeonQuickJoinEnabled","AutoNightmareEnabled","AutoOdMorphEnabled","DestroyInsteadOfExtract"}),
-            "Enhancement renders independent verified caps and eight supported registry toggles");
+            && vm.Toggles.Where(t=>t.Section=="Enhance").Select(t=>t.Name).OrderBy(n=>n).SequenceEqual(new[]{"AutoAwakenEnabled","AutoBuyOdEnergy","AutoBuyReviveStone","AutoDailyWaveEnabled","AutoDungeonQuickJoinEnabled","AutoNightmareEnabled","AutoOdMorphEnabled","CoinShopAbyssStigma","CoinShopFestivalDaevanion","CoinShopFestivalStigma","CoinShopNightmareDaevanion","CoinShopNightmareStigma","DestroyInsteadOfExtract","EnchantBoundKinahOnly","GenusInsightAutoAnalyze"}),
+            "Enhancement renders independent verified caps and fifteen supported registry toggles");
         var mappedEnhancementNames=enhancementChecks.Select(c=>c.DataContext).OfType<RegistryToggle>().Select(t=>t.Name).ToArray();
-        check(mappedEnhancementNames.Distinct(StringComparer.Ordinal).Count()==8&&mappedEnhancementNames.Count(n=>n=="DestroyInsteadOfExtract")==1,"Character Enhancement contains exactly one Equipment Extraction registry control and no duplicates");
+        check(mappedEnhancementNames.Distinct(StringComparer.Ordinal).Count()==10&&mappedEnhancementNames.Count(n=>n=="DestroyInsteadOfExtract")==1,"Character Enhancement contains exactly one Equipment Extraction registry control and no duplicates");
         var extractionToggle=enhancementChecks.Single(c=>c.DataContext is RegistryToggle toggle&&toggle.Name=="DestroyInsteadOfExtract");
-        check(extractionToggle.IsEnabled&&extractionToggle.Style==Application.Current.FindResource("ToggleSwitchStyle")&&!All<TextBlock>(window).Any(t=>t.Text.Contains("does not identify a verified setting name")),"Equipment Extraction uses the enabled Hexor switch style with no outdated warning");
+        foreach(var feature in LegionCommanderFeatureSettings.Booleans.Where(f=>f.Section=="Enhance"&&f.Name!="AutoDailyWaveEnabled"&&f.Name!="AutoNightmareEnabled"&&f.Name!="AutoAwakenEnabled"&&f.Name!="AutoOdMorphEnabled"&&f.Name!="AutoDungeonQuickJoinEnabled"))
+        {
+            var toggle=enhancementChecks.Single(c=>c.DataContext is RegistryToggle t&&t.Name==feature.Name);
+            toggle.IsChecked=true;window.UpdateLayout();check(vm.Registry.Read("Enhance",feature.Name)==1,"Actual enhancement control writes exact DWORD: "+feature.Name);
+            toggle.IsChecked=false;window.UpdateLayout();check(vm.Registry.Read("Enhance",feature.Name)==0,"Actual enhancement control persists OFF: "+feature.Name);
+        }
+        check(extractionToggle.IsEnabled&&!All<TextBlock>(window).Any(t=>t.Text.Contains("does not identify a verified setting name")),"Equipment Extraction keeps an enabled checkbox control with no outdated warning");
+
+        Navigate(window,2,"auto dungeon",pump:false);
+        var dungeonFlowNames=new[]{"AutoDailyWaveEnabled","AutoNightmareEnabled","AutoAwakenEnabled","AutoOdMorphEnabled","AutoDungeonQuickJoinEnabled"};
+        check(All<CheckBox>(window).Select(c=>c.DataContext).OfType<RegistryToggle>().Select(t=>t.Name).SequenceEqual(dungeonFlowNames.Append("AutoDungeonUrugugu").ToArray()),"Auto Dungeon exposes the dungeon flow toggles exactly once");
+        foreach(var name in dungeonFlowNames.Append("AutoDungeonUrugugu"))
+        {
+            var toggle=All<CheckBox>(window).Single(c=>c.DataContext is RegistryToggle t&&t.Name==name);
+            toggle.IsChecked=true;window.UpdateLayout();
+            check(vm.Registry.Read(toggle.DataContext is RegistryToggle t2&&t2.Section=="Enhance"?"Enhance":"ResourceGrab",name)==1,"Actual dungeon flow control writes exact DWORD: "+name);
+            toggle.IsChecked=false;window.UpdateLayout();
+            check(vm.Registry.Read(toggle.DataContext is RegistryToggle t3&&t3.Section=="Enhance"?"Enhance":"ResourceGrab",name)==0,"Actual dungeon flow control persists OFF: "+name);
+        }
+        var resetDefault=Find<Button>(window,"ResetDungeonPriorityButton")!;
+        check(resetDefault.Content.ToString()=="Reset Default","Auto Dungeon exposes the Reset Default action");
         if(Environment.GetEnvironmentVariable("HEXOR_CAPTURE_RELEASE_SCREENSHOT")=="1"){var enhancementScreenshot=Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(),"output","validation-1.0.10","ui-character-enhancement.png"));Directory.CreateDirectory(Path.GetDirectoryName(enhancementScreenshot)!);var enhancementImage=new RenderTargetBitmap((int)window.ActualWidth,(int)window.ActualHeight,96,96,PixelFormats.Pbgra32);enhancementImage.Render(window);var enhancementEncoder=new PngBitmapEncoder();enhancementEncoder.Frames.Add(BitmapFrame.Create(enhancementImage));using(var enhancementStream=File.Create(enhancementScreenshot))enhancementEncoder.Save(enhancementStream);}
         var enhancementScroll=Find<ScrollViewer>(window,"PageScroll")!;enhancementScroll.ScrollToEnd();window.UpdateLayout();Pump();check(enhancementScroll.VerticalOffset>0&&enhancementScroll.ExtentWidth<=enhancementScroll.ViewportWidth+1,"Character Enhancement remains vertically scrollable without horizontal overflow");
-        Navigate(window,3,"festival",pump:false);check(All<CheckBox>(window).Count()==2,"Festival retains both independent settings");
+        CaptureFeature(window,"enhancement-new-options");
+        Navigate(window,7,"festival",pump:false);check(All<CheckBox>(window).Count()==2,"Festival retains both independent settings");
         check(vm.Preferences.Instructions.Select(i=>i.Id).SequenceEqual(ids) && System.Text.Json.JsonSerializer.Serialize(vm.Preferences.Instructions)==workflow,
             "Four-tab navigation never deletes or rewrites retained workflow data");
         check(!workflow.Contains("SequenceNumber"),"Retained workflow row numbering stays presentation-only");
@@ -303,7 +374,7 @@ internal static class RuntimeDisplayTests
         vm.Status="JSON was saved, but the registry mirror failed. The stores are not synchronized; use Retry AutoTask mirror.";
         check(vm.CustomerStatus.Contains("Some settings were saved"),"Partial save remains clearly distinguished from success");
         vm.Status="Ready.";
-        for(int tab=0;tab<4;tab++)
+        for(int tab=0;tab<expected.Length;tab++)
         {
             Navigate(window,tab,"scaled screenshots");
             check(Find<ScrollViewer>(window,"PageScroll")!.VerticalOffset==0,"Tab navigation resets scrolling to show settings headings "+tab);
@@ -351,8 +422,20 @@ internal static class RuntimeDisplayTests
         while(!condition()&&timer.Elapsed<timeout){Pump();Thread.Sleep(10);}
         return condition();
     }
+    private static void CaptureFeature(Window window, string name)
+    {
+        var artifacts=Environment.GetEnvironmentVariable("HEXOR_TEST_ARTIFACTS");
+        if(string.IsNullOrEmpty(artifacts))return;
+        Directory.CreateDirectory(artifacts);
+        foreach(var scale in new[]{1.0,1.5})
+        {
+            var bitmap=new RenderTargetBitmap((int)Math.Ceiling(window.ActualWidth*scale),(int)Math.Ceiling(window.ActualHeight*scale),96*scale,96*scale,PixelFormats.Pbgra32);
+            bitmap.Render(window);var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(bitmap));
+            using var stream=File.Create(Path.Combine(artifacts,$"{name}-{(int)(scale*100)}.png"));encoder.Save(stream);
+        }
+    }
     private static T? Find<T>(DependencyObject parent, string name) where T : FrameworkElement => All<T>(parent).FirstOrDefault(e => e.Name == name);
-    private static IEnumerable<T> All<T>(DependencyObject parent) where T : DependencyObject
+    internal static IEnumerable<T> All<T>(DependencyObject parent) where T : DependencyObject
     {
         for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
         { var child = VisualTreeHelper.GetChild(parent, i); if (child is T t) yield return t; foreach (var nested in All<T>(child)) yield return nested; }

@@ -1,4 +1,4 @@
-﻿using System.Windows;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Media;
@@ -13,10 +13,11 @@ public sealed class MainWindow : Window
 {
  public MainViewModel Model {get;}
  private readonly ContentControl content=new();private readonly ScrollViewer pageScroll=new(){Name="PageScroll",VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled};private readonly StackPanel navigation=new(){Name="SidebarNavigation"};private readonly DispatcherTimer timer=new(){Interval=TimeSpan.FromSeconds(8)};
- private int page;private readonly string[] pages=["General","Auto Task","Character Enhancement","Shugo Festival"];
+ private int page;private readonly string[] pages=["General","Resource Grab","Auto Dungeon","Auto Task","Character Enhancement","Daily Activities","Work Schedule","Shugo Festival","CAPTCHA","Live Control"];
  private readonly string windowId=Guid.NewGuid().ToString("N")[..8];
  private string closeOrigin="window-close-or-external";
- private readonly TextBlock title=new(){FontSize=30,FontWeight=FontWeights.SemiBold};
+ private readonly TextBlock title=new(){FontSize=30,FontWeight=FontWeights.SemiBold,Focusable=true};
+
  private readonly MenuStatusService menuStatusService=new();
  private MenuStatusResult menuStatus=new(MenuStatusState.Checking,"Checking — installation discovery in progress");
  private TextBlock? menuStatusText;
@@ -27,7 +28,7 @@ public sealed class MainWindow : Window
  public MainWindow(MainViewModel? model=null, bool automaticallyCheckForUpdates=true)
  {
   this.automaticallyCheckForUpdates=automaticallyCheckForUpdates;
-  Model=model??new();DataContext=Model;Title="HEXOR AION CONTROL CENTER";Width=Math.Min(1200,SystemParameters.WorkArea.Width);Height=Math.Min(760,SystemParameters.WorkArea.Height);MinWidth=920;MinHeight=620;ResizeMode=ResizeMode.CanResize;UseLayoutRounding=true;SnapsToDevicePixels=true;WindowStartupLocation=WindowStartupLocation.CenterScreen;Background=Brush("#0B0912");Foreground=Brushes.White;FontFamily=new("Segoe UI Variable");FontSize=14;
+  Model=model??new();DataContext=Model;Title="HEXOR AION CONTROL CENTER";Width=Math.Min(1200,SystemParameters.WorkArea.Width);Height=Math.Min(800,SystemParameters.WorkArea.Height);MinWidth=920;MinHeight=620;ResizeMode=ResizeMode.CanResize;UseLayoutRounding=true;SnapsToDevicePixels=true;WindowStartupLocation=WindowStartupLocation.CenterScreen;Background=Brush("#0B0912");Foreground=Brushes.White;FontFamily=new("Segoe UI Variable");FontSize=14;
   WindowStyle=WindowStyle.None;
   WindowChrome.SetWindowChrome(this,new WindowChrome{CaptionHeight=46,ResizeBorderThickness=new Thickness(6),GlassFrameThickness=new Thickness(0),CornerRadius=new CornerRadius(14),UseAeroCaptionButtons=false,NonClientFrameEdges=NonClientFrameEdges.None});
   var shell=new Grid();shell.RowDefinitions.Add(new(){Height=new GridLength(46)});shell.RowDefinitions.Add(new());Content=new Border{BorderBrush=Brush("#32294A"),BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(14),ClipToBounds=true,Child=shell};
@@ -43,14 +44,17 @@ public sealed class MainWindow : Window
   var sidebar=new DockPanel{Background=Brush("#100D19"),Margin=new(0)};root.Children.Add(sidebar);
   var brand=new StackPanel{Margin=new(22,24,22,20)};var suppliedLogo=BrandImage("Assets/Hex Logo-Transparent.png",196,64);if(suppliedLogo!=null)brand.Children.Add(suppliedLogo);else brand.Children.Add(Text("HEXOR",29,true));brand.Children.Add(Text("AION CONTROL CENTER",10,false,"#B9ADCA"));DockPanel.SetDock(brand,Dock.Top);sidebar.Children.Add(brand);
   var footer=new StackPanel{Margin=new(18,12,18,22)};var updaterButton=Button("Open AION Updater",async()=>await Model.OpenAionUpdaterAsync());updaterButton.Name="OpenAionUpdaterButton";updaterButton.HorizontalAlignment=HorizontalAlignment.Stretch;updaterButton.Background=Brush("#6942A8");updaterButton.ToolTip="Open the original AION updater";footer.Children.Add(updaterButton);
-  var updaterStatus=Text("",13,true,"#DCC8FF");updaterStatus.Name="AionUpdaterStatus";updaterStatus.SetBinding(TextBlock.TextProperty,nameof(MainViewModel.UpdateStatus));AutomationProperties.SetLiveSetting(updaterStatus,AutomationLiveSetting.Polite);footer.Children.Add(updaterStatus);
-  footer.Children.Add(Text("ORIGINAL UPDATER · ON DEMAND",9,false,"#AFA0C7"));DockPanel.SetDock(footer,Dock.Bottom);sidebar.Children.Add(footer);sidebar.Children.Add(navigation);
+  var updaterStatus=Text("",12,false,"#B9ADCA");updaterStatus.Name="AionUpdaterStatus";updaterStatus.SetBinding(TextBlock.TextProperty,nameof(MainViewModel.UpdateStatus));AutomationProperties.SetLiveSetting(updaterStatus,AutomationLiveSetting.Polite);footer.Children.Add(updaterStatus);
+  DockPanel.SetDock(footer,Dock.Bottom);sidebar.Children.Add(footer);
+  sidebar.Children.Add(new ScrollViewer{Content=navigation,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled});
   var main=new DockPanel{Margin=new(32,26,32,20)};Grid.SetColumn(main,1);root.Children.Add(main);
+  title.SetValue(KeyboardNavigation.IsTabStopProperty, false);
+  AutomationProperties.SetHeadingLevel(title, AutomationHeadingLevel.Level1);
   var head=new StackPanel();head.Children.Add(title);head.Margin=new(0,0,0,14);DockPanel.SetDock(head,Dock.Top);main.Children.Add(head);
   var status=new TextBlock{Margin=new(0,8,0,0),TextWrapping=TextWrapping.Wrap,Foreground=Brush("#CDB6F5")};status.SetBinding(TextBlock.TextProperty,"CustomerStatus");DockPanel.SetDock(status,Dock.Bottom);main.Children.Add(status);
-  var monitor=new WrapPanel();foreach(var item in new[]{("GAME","GameStatus"),("CLIENT","Detection.Client"),("SETTINGS","CustomerConfigurationStatus"),("IN-GAME CONTROLS","Show / Hide Menu · F10")}){var box=new StackPanel{Margin=new(0,0,24,0),MinWidth=130};box.Children.Add(Text(item.Item1,9,false,"#A99ABF"));var value=Text(item.Item2=="Show / Hide Menu · F10"?"F10  ·  Show / Hide Menu":"",13,true,item.Item2=="Show / Hide Menu · F10"?"#DCC8FF":"#F1EFF8");value.MaxWidth=330;if(item.Item2!="Show / Hide Menu · F10")value.SetBinding(TextBlock.TextProperty,item.Item2);monitor.Children.Add(box);box.Children.Add(value);}var monitorCard=Card(monitor);monitorCard.Margin=new(0,0,0,18);DockPanel.SetDock(monitorCard,Dock.Top);main.Children.Add(monitorCard);
+  var monitor=new WrapPanel();foreach(var item in new[]{("GAME","GameStatus"),("CLIENT","Detection.Client"),("SETTINGS","CustomerConfigurationStatus"),("CAPTCHA","CaptchaStatusText"),("VISUAL","VisualMonitorStatusText"),("IN-GAME CONTROLS","Show / Hide Menu · F10")}){var box=new StackPanel{Margin=new(0,0,24,0),MinWidth=130};box.Children.Add(Text(item.Item1,9,false,"#A99ABF"));var value=Text(item.Item2=="Show / Hide Menu · F10"?"F10  ·  Show / Hide Menu":"",13,true,item.Item2=="Show / Hide Menu · F10"?"#DCC8FF":"#F1EFF8");value.MaxWidth=330;if(item.Item1=="CAPTCHA")value.Name="CaptchaStatusTile";if(item.Item2!="Show / Hide Menu · F10")value.SetBinding(TextBlock.TextProperty,item.Item2);monitor.Children.Add(box);box.Children.Add(value);}var monitorCard=Card(monitor);monitorCard.Margin=new(0,0,0,18);DockPanel.SetDock(monitorCard,Dock.Top);main.Children.Add(monitorCard);
   pageScroll.Content=content;main.Children.Add(pageScroll);
-   BuildNavigation();ShowPage(0);timer.Tick+=async(_,_)=>await Model.RefreshDetectionAsync();Loaded+=async(_,_)=>{try{await Model.DiscoverAsync();await RefreshMenuStatusAsync();ShowPage(page);await Model.RefreshDetectionAsync();await RefreshMenuStatusAsync();if(model==null && Model.NeedsRegistryInitialization())PromptRegistryInitialization();timer.Start();}finally{initialLoadCompletion.TrySetResult();}};Activated+=async(_,_)=>await RefreshMenuStatusAsync();Closed+=(_,_)=>{timer.Stop();menuRefresh?.Cancel();menuRefresh?.Dispose();Model.Dispose();};
+   BuildNavigation();ShowPage(0);timer.Tick+=async(_,_)=>{await Model.RefreshDetectionAsync();await Model.PollCaptchaAsync();await Model.PollVisualMonitorAsync();};Loaded+=async(_,_)=>{try{await Model.DiscoverAsync();await RefreshMenuStatusAsync();ShowPage(page);await Model.RefreshDetectionAsync();await Model.PollCaptchaAsync();await Model.PollVisualMonitorAsync();await RefreshMenuStatusAsync();if(model==null && Model.NeedsRegistryInitialization())PromptRegistryInitialization();timer.Start();}finally{initialLoadCompletion.TrySetResult();}};Activated+=async(_,_)=>await RefreshMenuStatusAsync();Closed+=(_,_)=>{timer.Stop();menuRefresh?.Cancel();menuRefresh?.Dispose();Model.Dispose();};
  }
  protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
  {
@@ -86,16 +90,122 @@ public sealed class MainWindow : Window
  private StackPanel Section(StackPanel parent,string heading,string? note=null){var panel=new StackPanel();panel.Children.Add(Text(T(heading),18,true));if(note!=null)panel.Children.Add(Text(T(note),12,false,"#AEA5C0"));parent.Children.Add(Card(panel));return panel;}
  private string T(string s)=>Translations.Get(Model.Preferences.UiLanguage,s);
  private Button Button(string label,Action action){var b=new Button{Content=T(label),HorizontalAlignment=HorizontalAlignment.Left};b.Click+=(_,_)=>action();return b;}
- private TextBox Input(Panel panel,string label,string path){panel.Children.Add(Text(T(label),12,false,"#BAB2CC"));var box=new TextBox{Width=320,MaxWidth=320,HorizontalAlignment=HorizontalAlignment.Left};box.SetBinding(TextBox.TextProperty,new Binding(path){Mode=BindingMode.TwoWay,UpdateSourceTrigger=UpdateSourceTrigger.PropertyChanged});panel.Children.Add(box);return box;}
- private CheckBox Check(Panel panel,string label,string path){var box=new CheckBox{Content=T(label)};box.SetBinding(CheckBox.IsCheckedProperty,new Binding(path){Mode=BindingMode.TwoWay});panel.Children.Add(box);return box;}
- private void BuildNavigation(){navigation.Children.Clear();for(var i=0;i<pages.Length;i++){var index=i;var b=Button(T(pages[i]),()=>ShowPage(index));var navText=Text(T(pages[i]),13,i==page,i==page?"#FFFFFF":"#C3B8D2");navText.TextWrapping=TextWrapping.NoWrap;b.Content=navText;b.Height=46;b.HorizontalAlignment=HorizontalAlignment.Stretch;b.HorizontalContentAlignment=HorizontalAlignment.Left;b.Margin=new(14,3,14,3);b.Padding=new Thickness(16,0,10,0);b.Background=Brush(i==page?"#51377B":"#100D19");b.Name="Navigation"+i;AutomationProperties.SetName(b,T(pages[i]));navigation.Children.Add(b);}}
-  public void ShowPage(int index){if(index<0||index>=pages.Length)throw new ArgumentOutOfRangeException(nameof(index));page=index;title.Text=T(pages[index]);BuildNavigation();if(index>0)Model.ReloadRegistry();var stack=new StackPanel();content.Content=stack;switch(index){case 0:General(stack);_ = RefreshMenuStatusAsync();break;case 1:AutoTask(stack);break;case 2:Enhance(stack);break;case 3:Festival(stack);break;}pageScroll.ScrollToTop();}
+ private TextBox Input(Panel panel,string label,string path)
+ {
+  panel.Children.Add(Text(T(label),12,false,"#BAB2CC"));
+  var box=new TextBox{Width=220,HorizontalAlignment=HorizontalAlignment.Left};
+  AutomationProperties.SetName(box, T(label));
+  box.SetBinding(TextBox.TextProperty,new Binding(path){Mode=BindingMode.TwoWay,UpdateSourceTrigger=UpdateSourceTrigger.PropertyChanged});
+  panel.Children.Add(box);
+  return box;
+ }
+ private CheckBox Check(Panel panel,string label,string path){var box=new CheckBox{Content=T(label),HorizontalContentAlignment=HorizontalAlignment.Left,VerticalContentAlignment=VerticalAlignment.Center};box.SetBinding(CheckBox.IsCheckedProperty,new Binding(path){Mode=BindingMode.TwoWay});panel.Children.Add(box);return box;}
+ // LegionCommander-style helpers: plain checkbox rows bound to verified registry toggles, and
+ // radio groups for verified enum values. All keep the purplish shell.
+ private CheckBox CheckToggle(Panel panel,string toggleName,string? labelOverride=null)
+ {
+  var toggle=Model.Toggles.Single(t=>t.Name==toggleName);
+  var box=new CheckBox{Content=T(labelOverride??toggle.Label),VerticalContentAlignment=VerticalAlignment.Center};
+  AutomationProperties.SetName(box,T(labelOverride??toggle.Label));
+  box.SetBinding(CheckBox.IsCheckedProperty,new Binding("Value"){Mode=BindingMode.TwoWay});
+  box.SetBinding(CheckBox.IsEnabledProperty,"IsEditable");
+  box.DataContext=toggle;panel.Children.Add(box);return box;
+ }
+ private static readonly EqualToBoolConverter RadioConverter=new();
+ private StackPanel RadioRow(Panel panel,string label,string bindingPath,params (string Name,string Text,object Value)[] options)
+ {
+  var row=new StackPanel{Orientation=Orientation.Horizontal,VerticalAlignment=VerticalAlignment.Center,Margin=new(0,4,0,4)};
+  var labelText=Text(T(label),13,false,"#BAB2CC");labelText.Margin=new(0,0,14,0);labelText.VerticalAlignment=VerticalAlignment.Center;row.Children.Add(labelText);
+  foreach(var option in options)
+  {
+   var radio=new RadioButton{GroupName="RadioRow-"+label,Content=T(option.Text),Margin=new(0,0,18,0),VerticalContentAlignment=VerticalAlignment.Center,Name=option.Name};
+   AutomationProperties.SetName(radio,option.Text);
+   radio.SetBinding(RadioButton.IsCheckedProperty,new Binding(bindingPath){Converter=RadioConverter,ConverterParameter=option.Value,Mode=BindingMode.TwoWay});
+   row.Children.Add(radio);
+  }
+  panel.Children.Add(row);return row;
+ }
+ private void BuildNavigation(){navigation.Children.Clear();for(var i=0;i<pages.Length;i++){var index=i;var b=Button(T(pages[i]),()=>{ShowPage(index);Keyboard.Focus(title);});var navText=Text(T(pages[i]),13,i==page,i==page?"#FFFFFF":"#C3B8D2");navText.TextWrapping=TextWrapping.NoWrap;b.Content=navText;b.Height=46;b.HorizontalAlignment=HorizontalAlignment.Stretch;b.HorizontalContentAlignment=HorizontalAlignment.Left;b.Margin=new(14,3,14,3);b.Padding=new Thickness(16,0,10,0);b.Background=Brush(i==page?"#51377B":"#100D19");b.Name="Navigation"+i;AutomationProperties.SetName(b,T(pages[i]));navigation.Children.Add(b);}}
+  public void ShowPage(int index){if(index<0||index>=pages.Length)throw new ArgumentOutOfRangeException(nameof(index));page=index;title.Text=T(pages[index]);BuildNavigation();if(index>0)Model.ReloadRegistry();var stack=new StackPanel();content.Content=stack;switch(index){case 0:General(stack);_ = RefreshMenuStatusAsync();break;case 1:ResourceGrab(stack);break;case 2:AutoDungeonPage(stack);break;case 3:AutoTask(stack);break;case 4:Enhance(stack);break;case 5:DailyActivities(stack);break;case 6:WorkSchedule(stack);break;case 7:Festival(stack);break;case 8:CaptchaPage(stack);break;case 9:LiveControl(stack);_ = Model.RefreshLiveStatusAsync();break;}pageScroll.ScrollToTop();}
+ private void LiveControl(StackPanel root)
+ {
+  Model.LiveStopConfirmation = row => MessageBox.Show(this,$"Stop the daily workflow for session #{row.AccountId} (PID {row.ProcessId})?\n\nThe running automation stops at the next save point. This does not close the game.","Stop session",MessageBoxButton.YesNo,MessageBoxImage.Warning,MessageBoxResult.No)==MessageBoxResult.Yes;
+  Model.LiveResolvePrompt = row =>
+  {
+   var prompt=new Window{Title="Resolve incident",Owner=this,Width=480,SizeToContent=SizeToContent.Height,WindowStartupLocation=WindowStartupLocation.CenterOwner,Background=Brush("#161620"),Foreground=Brushes.White};
+   var panel=new StackPanel{Margin=new Thickness(24)};
+   panel.Children.Add(new TextBlock{Text=$"Incident {row.IncidentId} for account #{row.AccountId}\n{row.Summary}",TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,12)});
+   var outcome=new ComboBox{ItemsSource=new[]{"resume","close_only"},SelectedIndex=0,HorizontalAlignment=HorizontalAlignment.Left};
+   var outcomeHelp=new TextBlock{Text="resume: resolve and resume the state machine. close_only: record the resolution without resuming.",TextWrapping=TextWrapping.Wrap,Foreground=Brush("#B9ADCA"),FontSize=11,Margin=new Thickness(0,4,0,12)};
+   var summary=new TextBox{MinWidth=320,Text="Resolved from Hexor Control Center."};
+   var apply=new Button{Content="Resolve",IsDefault=true,Margin=new Thickness(0,4,0,4)};
+   var cancel=new Button{Content="Cancel",IsCancel=true,Margin=new Thickness(0,4,0,4)};
+   panel.Children.Add(new TextBlock{Text="Outcome",FontSize=12,Foreground=Brush("#BAB2CC")});panel.Children.Add(outcome);panel.Children.Add(outcomeHelp);
+   panel.Children.Add(new TextBlock{Text="Summary",FontSize=12,Foreground=Brush("#BAB2CC")});panel.Children.Add(summary);
+   var buttons=new StackPanel{Orientation=Orientation.Horizontal};buttons.Children.Add(apply);buttons.Children.Add(cancel);panel.Children.Add(buttons);
+   (string,string)? decision=null;apply.Click+=(_,_)=>{decision=(outcome.SelectedItem as string ?? "resume",summary.Text);prompt.Close();};
+   prompt.Content=panel;prompt.ShowDialog();return decision is { } d ? (d.Item1,d.Item2) : null;
+  };
+
+  var direct=Section(root,"Game connection","Hexor connects to the game automatically while AION2 is running. Stop asks the running automation to halt; Hexor never starts automation itself.");
+  var directStatus=Text("",13,true,"#DCC8FF");directStatus.Name="LiveGameStatusText";directStatus.SetBinding(TextBlock.TextProperty,"LiveGameStatus");AutomationProperties.SetLiveSetting(directStatus,AutomationLiveSetting.Polite);direct.Children.Add(directStatus);
+  var refresh=Button("Refresh live status",async()=>await Model.RefreshLiveStatusAsync());refresh.Name="RefreshLiveStatusButton";refresh.Background=Brush("#6942A8");direct.Children.Add(refresh);
+
+  var sessions=Section(root,"Live sessions","Pause and Continue hold or resume the running workflow; Stop ends it at the next save point. Automation is never started from Hexor.");
+  var sessionList=new ItemsControl{Name="LiveSessionList"};sessionList.SetBinding(ItemsControl.ItemsSourceProperty,"LiveSessionItems");
+  sessionList.ItemTemplate=(DataTemplate)System.Windows.Markup.XamlReader.Parse("""
+   <DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+    <Border Background="#131020" CornerRadius="10" Padding="14,10" Margin="0,0,0,8">
+     <StackPanel>
+      <TextBlock Text="{Binding Label}" FontWeight="SemiBold"/>
+      <TextBlock Text="{Binding Ipc}" FontSize="11" Foreground="#B9ADCA" Margin="0,2,0,6"/>
+      <StackPanel Orientation="Horizontal">
+       <Button Content="Pause" Command="{Binding PauseCommand}" MinWidth="90" Margin="0,0,10,0" Visibility="{Binding BridgeControls}"/>
+       <Button Content="Continue" Command="{Binding ContinueCommand}" MinWidth="90" Margin="0,0,10,0" Visibility="{Binding BridgeControls}"/>
+       <Button Content="Stop" Command="{Binding StopCommand}" MinWidth="90" Background="#69284A" Margin="0,0,10,0"/>
+       <Button Content="Load daily records" Command="{Binding RecordsCommand}" MinWidth="150" Visibility="{Binding BridgeControls}"/>
+       <Button Content="Refresh status" Command="{Binding RefreshCommand}" MinWidth="120" Visibility="{Binding DirectControls}"/>
+      </StackPanel>
+     </StackPanel>
+    </Border>
+   </DataTemplate>
+   """);
+  sessions.Children.Add(sessionList);
+
+  var records=Section(root,"Daily records","Reads the automation controller's daily records with the game's own day boundary (UTC+8, YYYY-MM-DD). Optional server ID narrows the result.");
+  var recordsRow=new Grid{Margin=new Thickness(0,4,0,6)};recordsRow.ColumnDefinitions.Add(new());recordsRow.ColumnDefinitions.Add(new(){Width=new GridLength(160)});recordsRow.ColumnDefinitions.Add(new());recordsRow.ColumnDefinitions.Add(new(){Width=new GridLength(120)});
+  recordsRow.Children.Add(Text("Game day (YYYY-MM-DD)"));
+  var gameDay=new TextBox{Name="LiveRecordsGameDayInput",Width=140};Grid.SetColumn(gameDay,1);gameDay.SetBinding(TextBox.TextProperty,new Binding("LiveRecordsGameDay"){Mode=BindingMode.TwoWay,UpdateSourceTrigger=UpdateSourceTrigger.PropertyChanged});recordsRow.Children.Add(gameDay);
+  recordsRow.Children.Add(Text("Server ID",12,false,"#BAB2CC"));
+  var serverId=new TextBox{Name="LiveRecordsServerIdInput",Width=100};Grid.SetColumn(serverId,3);serverId.SetBinding(TextBox.TextProperty,new Binding("LiveRecordsServerId"){Mode=BindingMode.TwoWay,UpdateSourceTrigger=UpdateSourceTrigger.PropertyChanged});recordsRow.Children.Add(serverId);
+  records.Children.Add(recordsRow);
+  var recordsStatus=Text("",12,false,"#B9ADCA");recordsStatus.SetBinding(TextBlock.TextProperty,"LiveDailyRecordsStatus");records.Children.Add(recordsStatus);
+  var recordList=new ItemsControl{Name="LiveDailyRecordList",FontSize=12,Foreground=Brush("#DCC8FF")};recordList.SetBinding(ItemsControl.ItemsSourceProperty,"LiveDailyRecords");records.Children.Add(recordList);
+
+  var captcha=Section(root,"CAPTCHA operations","CAPTCHA activity recorded while an automation controller session was connected.");
+  var captchaStatus=Text("",12,false,"#B9ADCA");captchaStatus.SetBinding(TextBlock.TextProperty,"LiveCaptchaStatus");captcha.Children.Add(captchaStatus);
+  var captchaList=new ItemsControl{Name="LiveCaptchaOperationList",FontSize=12,Foreground=Brush("#DCC8FF")};captchaList.SetBinding(ItemsControl.ItemsSourceProperty,"LiveCaptchaRows");captcha.Children.Add(captchaList);
+
+  var incidents=Section(root,"Automation incidents","Open problems the controller reported (stalled or errored workflows). Resolve records your outcome and optionally resumes.");
+  var incidentList=new ItemsControl{Name="LiveIncidentList"};incidentList.SetBinding(ItemsControl.ItemsSourceProperty,"LiveIncidentItems");
+  incidentList.ItemTemplate=(DataTemplate)System.Windows.Markup.XamlReader.Parse("""
+   <DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+    <Border Background="#131020" CornerRadius="10" Padding="14,10" Margin="0,0,0,8">
+     <StackPanel>
+      <TextBlock Text="{Binding Label}" TextWrapping="Wrap"/>
+      <Button Content="Resolve…" Command="{Binding ResolveCommand}" MinWidth="110" Margin="0,8,0,0" HorizontalAlignment="Left"/>
+     </StackPanel>
+    </Border>
+   </DataTemplate>
+   """);
+  incidents.Children.Add(incidentList);
+
+ }
  private void General(StackPanel root)
  {
   root.Children.Add(Card(new Hexor.Updates.UpdatePanel(automaticallyCheckForUpdates)));
   var p=Section(root,"Language preferences");
-  var uiRow=new Grid{Margin=new Thickness(0,4,0,8)};uiRow.ColumnDefinitions.Add(new());uiRow.ColumnDefinitions.Add(new(){Width=new GridLength(240)});p.Children.Add(uiRow);uiRow.Children.Add(Text(T("Control Center Language")));var ui=new ComboBox{ItemsSource=new[]{"English","简体中文","한국어"},SelectedItem=Model.Preferences.UiLanguage,HorizontalAlignment=HorizontalAlignment.Left};Grid.SetColumn(ui,1);uiRow.Children.Add(ui);ui.SelectionChanged+=(_,_)=>{if(ui.SelectedItem is string language){var previous=Model.Preferences.UiLanguage;new LanguageSettingsService().SetUi(Model.Preferences,language);if(!Model.Save())Model.Preferences.UiLanguage=previous;ShowPage(0);}};
-  var gameRow=new Grid{Margin=new Thickness(0,4,0,0)};gameRow.ColumnDefinitions.Add(new());gameRow.ColumnDefinitions.Add(new(){Width=new GridLength(240)});p.Children.Add(gameRow);gameRow.Children.Add(Text(T("Preferred Game Language")));var game=new ComboBox{ItemsSource=new[]{"English","Traditional Chinese","Korean"},SelectedItem=Model.Preferences.GameLanguage,HorizontalAlignment=HorizontalAlignment.Left};Grid.SetColumn(game,1);gameRow.Children.Add(game);game.SelectionChanged+=(_,_)=>{if(game.SelectedItem is string language){Model.SetGameLanguage(language);}};
+  var uiRow=new Grid{Margin=new Thickness(0,4,0,8)};uiRow.ColumnDefinitions.Add(new());uiRow.ColumnDefinitions.Add(new(){Width=new GridLength(240)});p.Children.Add(uiRow);uiRow.Children.Add(Text(T("Language")));var ui=new ComboBox{ItemsSource=new[]{"English","简体中文","한국어"},SelectedItem=Model.Preferences.UiLanguage,HorizontalAlignment=HorizontalAlignment.Left};Grid.SetColumn(ui,1);uiRow.Children.Add(ui);ui.SelectionChanged+=(_,_)=>{if(ui.SelectedItem is string language){var previous=Model.Preferences.UiLanguage;var previousGame=Model.Preferences.GameLanguage;new LanguageSettingsService().SetUi(Model.Preferences,language);try{Model.SetGameLanguage(language switch{"English"=>"English","简体中文"=>"Traditional Chinese",_=>"Korean"});}catch{Model.Preferences.GameLanguage=previousGame;}if(!Model.Save()){Model.Preferences.UiLanguage=previous;Model.Preferences.GameLanguage=previousGame;}ShowPage(0);}};
 
    var cleanup=Section(root,"Hexor file cleanup","Removes path-matched automation DLLs and verified updater-owned data. Hexor Control Center remains installed; use Windows Settings to uninstall it.");
    var clean=Button("Clean Up Hexor Files",async()=>await RunCleanupAsync());clean.Name="CleanUpHexorFilesButton";clean.Background=Brush("#6942A8");cleanup.Children.Add(clean);
@@ -111,8 +221,7 @@ public sealed class MainWindow : Window
   diagnosticSupport.Children.Add(Button("Export Support Logs",()=>{var path=Diagnostics.ExportSupportLogs();if(string.IsNullOrEmpty(path)){MessageBox.Show(this,"Support log export could not be created.","Diagnostics",MessageBoxButton.OK,MessageBoxImage.Warning);return;}new SupportLogExportDialog(path){Owner=this}.ShowDialog();}));
   diagnosticSupport.Children.Add(Button("Open Export Folder",()=>{var path=Diagnostics.LastExportPath;if(!string.IsNullOrEmpty(path))SupportLogExportActions.OpenFolder(path);else System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Diagnostics.Root){UseShellExecute=true});}));
   var update=Section(root,"UPDATE STATUS");var updateText=Text("",14,true,"#DCC8FF");updateText.SetBinding(TextBlock.TextProperty,"UpdateStatus");update.Children.Add(updateText);update.Children.Add(Text("Run the AION updater again whenever AION2 receives a game update.",12,false,"#B9ADCA"));
-  var support=Section(root,"HEXOR SUPPORT & COMMUNITY");support.Children.Add(Text("Discord Server · discord.gg/pE6mZG7MJ\nDiscord Username · h3x0r1337",13,false,"#DCC8FF"));support.Children.Add(Button("Join Discord",()=>System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://discord.gg/pE6mZG7MJ"){UseShellExecute=true})));support.Children.Add(Button("Copy Username",()=>{Clipboard.SetText("h3x0r1337");MessageBox.Show(this,"Discord username copied.","Hexor Support",MessageBoxButton.OK,MessageBoxImage.Information);}));
-  var next=Section(root,"NEXT STEPS");next.Children.Add(Text("1. Open AION2.\n2. Wait for the game loader to download the required files.\n3. Open Config and ensure Auto Auction is disabled.",13));
+  var support=Section(root,"HEXOR SUPPORT & COMMUNITY");support.Children.Add(Text("Discord Server · discord.gg/PsDUVazRT3\nDiscord Username · h3x0r1337",13,false,"#DCC8FF"));support.Children.Add(Button("Join Discord",()=>System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://discord.gg/PsDUVazRT3"){UseShellExecute=true})));support.Children.Add(Button("Copy Username",()=>{Clipboard.SetText("h3x0r1337");MessageBox.Show(this,"Discord username copied.","Hexor Support",MessageBoxButton.OK,MessageBoxImage.Information);}));
 
   var advanced=new StackPanel();
   advanced.Children.Add(Button("Sync Legion Commander Settings",PromptRegistryInitialization));
@@ -126,7 +235,7 @@ public sealed class MainWindow : Window
    discovery.Children.Add(Button("Use settings: "+folder,()=>{Model.ConfirmConfigurationFolder(folder);ShowPage(0);}));
   }
   var original=Section(advanced,"Application language");
-  var culture=new ComboBox{ItemsSource=new[]{"zh-CN","en-US","ko-KR"},HorizontalAlignment=HorizontalAlignment.Left};culture.SetBinding(ComboBox.SelectedItemProperty,new Binding("OriginalUiCulture"){Mode=BindingMode.TwoWay});original.Children.Add(Text("LegionCommander interface language"));original.Children.Add(culture);original.Children.Add(Button("Save language preference",Model.SaveOriginalUiLanguage));
+  var culture=new ComboBox{ItemsSource=new[]{"zh-CN","en-US","ko-KR"},HorizontalAlignment=HorizontalAlignment.Left};culture.SetBinding(ComboBox.SelectedItemProperty,new Binding("OriginalUiCulture"){Mode=BindingMode.TwoWay});original.Children.Add(Text("In-game interface language"));original.Children.Add(culture);original.Children.Add(Button("Save language preference",Model.SaveOriginalUiLanguage));
   var detectedPath=Section(advanced,"Detected game location","Review and confirm the running game location before saving.");
   var observedPath=Text("",12);observedPath.SetBinding(TextBlock.TextProperty,"Detection.ExecutablePath");detectedPath.Children.Add(observedPath);
   var pathTarget=new ComboBox{ItemsSource=new[]{"Global / Steam","Taiwan","Korea"},SelectedIndex=0,HorizontalAlignment=HorizontalAlignment.Left};detectedPath.Children.Add(pathTarget);
@@ -138,9 +247,9 @@ public sealed class MainWindow : Window
    await Model.RefreshDetectionAsync();Model.ConfirmDetectedPath(proposal);
   }));
   var diagnosticPanel=new StackPanel();
-  foreach(var field in new[]{("Observed at","DiagnosticsObservedAt"),("AION2 processes / executable paths","DiagnosticsProcess"),("Resolved configuration data root","DiagnosticsDataRoot"),("Configuration files","DiagnosticsFiles"),("Configuration installation-path association","DiagnosticsAssociation"),("Discovery decisions","DiagnosticsCandidates"),("Setting details","DiagnosticsSettingDetails"),("Detection errors","DiagnosticsErrors")}){diagnosticPanel.Children.Add(Text(field.Item1,12,true,"#CDB6F5"));var data=Text("",12);data.SetBinding(TextBlock.TextProperty,field.Item2);diagnosticPanel.Children.Add(data);}
+  foreach(var field in new[]{("Observed at","DiagnosticsObservedAt"),("AION2 processes / executable paths","DiagnosticsProcess"),("Resolved configuration data root","DiagnosticsDataRoot"),("Configuration files","DiagnosticsFiles"),("Configuration installation-path association","DiagnosticsAssociation"),("Discovery decisions","DiagnosticsCandidates"),("Setting details","DiagnosticsSettingDetails"),("Detection errors","DiagnosticsErrors"),("CAPTCHA monitor","CaptchaDiagnostics")}){diagnosticPanel.Children.Add(Text(field.Item1,12,true,"#CDB6F5"));var data=Text("",12);data.SetBinding(TextBlock.TextProperty,field.Item2);diagnosticPanel.Children.Add(data);}
   var operation=Text("",12);operation.SetBinding(TextBlock.TextProperty,"Status");diagnosticPanel.Children.Add(operation);
-  diagnosticPanel.Children.Add(Text("Saved preferences are not confirmation that the running automation has applied them. Some preferences take effect when a task or the game next starts. Live control is not available in this release.",12));
+  diagnosticPanel.Children.Add(Text("Saved preferences are not confirmation that the running automation has applied them. Some preferences take effect when a task or the game next starts. Live session state and controls are available on the Live Control page.",12));
   diagnosticPanel.Children.Add(Text("Auto Task settings are stored in the existing configuration and registry. If a save is only partially completed, use the retry action below. No in-process refresh is sent.",12));
   diagnosticPanel.Children.Add(Button("Retry task settings synchronization",Model.RetryAutoTaskMirror));
   diagnosticPanel.Children.Add(Button("Refresh diagnostics",async()=>await Model.RefreshDetectionAsync()));
@@ -168,6 +277,23 @@ public sealed class MainWindow : Window
    catch(OperationCanceledException){}
    catch(Exception e){menuStatus=new(MenuStatusState.Error,"Error — menu status could not be determined.");if(menuStatusText!=null)menuStatusText.Text=menuStatus.Text;Diagnostics.Log("menu-status","status-check-failed; type="+e.GetType().Name);}
   }
+ private void AddCaptchaRecords(Panel parent)
+ {
+  var content=new StackPanel{Margin=new Thickness(4,6,0,0)};
+  var summary=Text("",12,false,"#B9ADCA");
+  summary.Name="CaptchaRecordsSummary";
+  summary.SetBinding(TextBlock.TextProperty,nameof(MainViewModel.CaptchaRecordsSummary));
+  content.Children.Add(summary);
+  var records=new ItemsControl{Name="CaptchaRecordList",FontSize=12,Foreground=Brush("#DCC8FF")};
+  records.SetBinding(ItemsControl.ItemsSourceProperty,nameof(MainViewModel.CaptchaRecordLines));
+  content.Children.Add(records);
+  parent.Children.Add(new Expander
+  {
+   Name="CaptchaRecordsExpander",Header=T("CAPTCHA records"),Foreground=Brushes.White,
+   Margin=new Thickness(0,10,0,0),Content=content
+  });
+ }
+
   private async Task UnloadMenuAsync()
   {
    await RefreshMenuStatusAsync();
@@ -235,41 +361,364 @@ public sealed class MainWindow : Window
  private void AutoTask(StackPanel root)
  {
   RegistryOptions(Section(root,"Task behavior"),"AutoTask");
-  var identity=Section(root,"Character identity","Saved numeric values are preserved. Race and class names are not yet verified.");
-  foreach(var item in new[]{("Character race (DWORD)","RegistryCharacterRace"),("Character job (DWORD)","RegistryCharacterJob")})
-  {
-   var value=Text("",13);value.SetBinding(TextBlock.TextProperty,new Binding(item.Item2){StringFormat=item.Item1+": {0}"});identity.Children.Add(value);
-  }
-  var resources=Section(root,"Resource Gathering");
-  RegistryOptions(resources,"ResourceGrab",["AutoEnterAbyss","AbyssCounterAttack","GuardianLogoutAvoidance"]);
-  resources.Children.Add(Text("Abyss layer",13,true));
-  var layer=new ComboBox{Name="AbyssLayerSelector",ItemsSource=new[]{"Lower","Middle"},HorizontalAlignment=HorizontalAlignment.Left};
-  AutomationProperties.SetName(layer,"Abyss layer");layer.SetBinding(ComboBox.SelectedIndexProperty,new Binding("AbyssLayer"){Mode=BindingMode.TwoWay});resources.Children.Add(layer);
-  resources.Children.Add(Text("Preferred dungeon",13,true));
-  var dungeon=new ComboBox{Name="PreferredDungeonSelector",ItemsSource=new[]{"Krao Cave","Draupnir Cave"},HorizontalAlignment=HorizontalAlignment.Left};
-  AutomationProperties.SetName(dungeon,"Preferred dungeon");dungeon.SetBinding(ComboBox.SelectedIndexProperty,new Binding("PreferredDungeon"){Mode=BindingMode.TwoWay});resources.Children.Add(dungeon);
-  var auction=Section(root,"Auto Auction","Each Hexor startup resets auto sell to OFF and price mode to Average.");
+  var identity = Section(root, "Character defaults");
+  CharacterDefault(identity, "Character race", "CharacterRace", nameof(MainViewModel.AutoTaskRace), LegionCommanderFeatureSettings.Races);
+  CharacterDefault(identity, "Character class", "CharacterJob", nameof(MainViewModel.AutoTaskJob), LegionCommanderFeatureSettings.Jobs);
+ }
+
+ private void ResourceGrab(StackPanel root)
+ {
+  var abyss=Section(root,"Abyss");
+  RegistryOptions(abyss,"ResourceGrab",["AutoEnterAbyss"]);
+  RadioRow(abyss,"Target layer","AbyssLayer",("AbyssLayerLower","Lower",0),("AbyssLayerMiddle","Middle",1));
+  RegistryOptions(abyss,"ResourceGrab",["AbyssCounterAttack"]);
+
+  var gathering=Section(root,"Gathering Filter");
+  RegistryOptions(gathering,"ResourceGrab",["GatherQualityFilterEnabled"]);
+  var qualityRow=RadioRow(gathering,"Minimum quality","Gathering.QualityLevel",("GatherQualityWhite","White","1"),("GatherQualityGreen","Green","2"),("GatherQualityBlue","Blue","3"));
+  qualityRow.SetBinding(IsEnabledProperty,new Binding("Gathering.CanEditQuality"));
+  var qualityDetail=Text("",12,false,"#B9ADCA");qualityDetail.SetBinding(TextBlock.TextProperty,new Binding("Gathering.QualityDetail"));gathering.Children.Add(qualityDetail);
+  var applyQuality=Button("Apply quality level",Model.Gathering.SaveQualityLevel);applyQuality.Name="ApplyGatherQualityLevel";applyQuality.SetBinding(IsEnabledProperty,new Binding("Gathering.CanEditQuality"));gathering.Children.Add(applyQuality);
+  RegistryOptions(gathering,"ResourceGrab",["GatherIgnoreAether"]);
+  var gatherListRow=new Grid{Margin=new Thickness(0,6,0,4)};gatherListRow.ColumnDefinitions.Add(new());gatherListRow.ColumnDefinitions.Add(new(){Width=GridLength.Auto});gathering.Children.Add(gatherListRow);
+  gatherListRow.Children.Add(Text(T("Gather list (only checked types are gathered)"),13,true));
+  var restore=Button("Restore defaults",Model.Gathering.RestoreDefaults);restore.Name="RestoreGatheringDefaultsButton";Grid.SetColumn(restore,1);gatherListRow.Children.Add(restore);
+  var summary=Text("",12,false,"#B9ADCA");summary.SetBinding(TextBlock.TextProperty,new Binding("Gathering.Summary"));gathering.Children.Add(summary);
+  var targets=new ItemsControl{Name="GatheringResources"};targets.SetBinding(ItemsControl.ItemsSourceProperty,new Binding("Gathering.Resources"));
+  targets.ItemTemplate=(DataTemplate)System.Windows.Markup.XamlReader.Parse("""
+   <DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+    <Grid Margin="0,3,8,3">
+     <Grid.ColumnDefinitions><ColumnDefinition Width="22"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+     <TextBlock Text="{Binding Ordinal}" VerticalAlignment="Center" Foreground="#A99ABF"/>
+     <TextBlock Grid.Column="1" Text="{Binding DisplayName}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,0" ToolTip="{Binding Identifier}"/>
+     <CheckBox Grid.Column="2" VerticalAlignment="Center" IsChecked="{Binding Enabled, Mode=TwoWay}" IsEnabled="{Binding IsEditable}" AutomationProperties.Name="{Binding DisplayName}"/>
+    </Grid>
+   </DataTemplate>
+   """);
+  gathering.Children.Add(new ScrollViewer{Name="GatheringResourceScroll",MaxHeight=320,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,Content=targets});
+  gathering.Children.Add(Button("Refresh gathering settings",Model.Gathering.Reload));
+
+  RegistryOptions(Section(root,"Guardian Verification"),"ResourceGrab",["GuardianLogoutAvoidance"]);
+
+  var auction=Section(root,"Auction","Each Hexor startup resets auto sell to OFF and price mode to Average.");
   RegistryOptions(auction,"ResourceGrab",["AuctionAutoSell"]);
-  auction.Children.Add(Text("Auction price mode",13,true));
-  var price=new ComboBox{Name="AuctionPriceModeSelector",ItemsSource=new[]{"Lowest","Average"},HorizontalAlignment=HorizontalAlignment.Left};
-  AutomationProperties.SetName(price,"Auction price mode");price.SetBinding(ComboBox.SelectedIndexProperty,new Binding("AuctionPriceMode"){Mode=BindingMode.TwoWay});auction.Children.Add(price);
+  var priceRow=RadioRow(auction,"Price","AuctionPriceMode",("AuctionPriceModeLowest","Lowest",0),("AuctionPriceModeAverage","Average",1));
+ }
+
+ private void AutoDungeonPage(StackPanel root)
+ {
+  var selection=Section(root,"Dungeon selection","The first enterable dungeon from the top is used: unchecked dungeons or those whose requirement is not met are skipped. The chosen dungeon is queued until it starts; list changes apply from the next round.");
+  RadioRow(selection,"Mode","DungeonMode",("DungeonModeNormal","Normal",0),("DungeonModeConquest","Conquest",1));
+  selection.Children.Add(Text(T("Dungeon priority"),13,true));
+  var header=new Grid{Margin=new Thickness(0,6,8,2)};header.ColumnDefinitions.Add(new(){Width=new(26)});header.ColumnDefinitions.Add(new(){Width=GridLength.Auto});header.ColumnDefinitions.Add(new());header.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
+  header.Children.Add(Text(T("#"),12,false,"#A99ABF"));
+  var onHeader=Text(T("On"),12,false,"#A99ABF");Grid.SetColumn(onHeader,1);header.Children.Add(onHeader);
+  var dungeonHeader=Text(T("Dungeon"),12,false,"#A99ABF");Grid.SetColumn(dungeonHeader,2);header.Children.Add(dungeonHeader);
+  var orderHeader=Text(T("Order"),12,false,"#A99ABF");Grid.SetColumn(orderHeader,3);header.Children.Add(orderHeader);
+  selection.Children.Add(header);
+  var dungeonList=new ItemsControl{Name="DungeonPriorityList"};dungeonList.SetBinding(ItemsControl.ItemsSourceProperty,new Binding("DungeonPriority"));
+  dungeonList.ItemTemplate=(DataTemplate)System.Windows.Markup.XamlReader.Parse("""
+   <DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+    <Grid Margin="0,3,8,3">
+     <Grid.ColumnDefinitions><ColumnDefinition Width="26"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+     <TextBlock Text="{Binding Ordinal}" VerticalAlignment="Center" Foreground="#A99ABF"/>
+     <CheckBox Grid.Column="1" VerticalAlignment="Center" IsChecked="{Binding Enabled, Mode=TwoWay}" AutomationProperties.Name="{Binding Label}"/>
+     <TextBlock Grid.Column="2" Text="{Binding Label}" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,12,0"/>
+     <StackPanel Grid.Column="3" Orientation="Horizontal">
+      <Button Content="Up" Command="{Binding MoveUp}" MinWidth="56" MinHeight="32" Margin="0,0,6,0"/>
+      <Button Content="Down" Command="{Binding MoveDown}" MinWidth="56" MinHeight="32"/>
+     </StackPanel>
+    </Grid>
+   </DataTemplate>
+   """);
+  selection.Children.Add(dungeonList);
+  var reset=Button("Reset Default",Model.ResetDungeonPriority);reset.Name="ResetDungeonPriorityButton";selection.Children.Add(reset);
+  selection.Children.Add(Text(T("Shared by all characters; the in-game Auto Dungeon page edits the same list."),12,false,"#A99ABF"));
+
+  var flow=Section(root,"Dungeon flow");
+  CheckToggle(flow,"AutoDailyWaveEnabled","Auto-run Daily Dungeon (rewards Enchantment Stones)");
+  CheckToggle(flow,"AutoNightmareEnabled","Auto-challenge Daily Nightmare (rewards Daevanion and Stigma points)");
+  CheckToggle(flow,"AutoAwakenEnabled","Auto-challenge Ascension Trial (rewards Enchantment Stones and Amplification Fragments)");
+  CheckToggle(flow,"AutoOdMorphEnabled","Auto-morph Odyle Energy");
+  CheckToggle(flow,"AutoDungeonQuickJoinEnabled","Quick Join existing rooms at 60K+ battle power");
+  RegistryOptions(flow,"ResourceGrab",["AutoDungeonUrugugu"]);
+ }
+
+ private void CaptchaPage(StackPanel root)
+ {
+  var auto=Section(root,"Auto-resolve","When the game shows a CAPTCHA challenge, Hexor solves it and submits the answer automatically. Nothing for you to run or watch.");
+  var autoStatus=Text("",13,true,"#DCC8FF");autoStatus.Name="CaptchaAutoStatusText";autoStatus.SetBinding(TextBlock.TextProperty,nameof(MainViewModel.CaptchaAutoStatus));AutomationProperties.SetLiveSetting(autoStatus,AutomationLiveSetting.Polite);auto.Children.Add(autoStatus);
+
+  var status=Section(root,"Activity log","What the challenge monitor has seen while Hexor was open.");
+  var summary=Text("",12,false,"#B9ADCA");summary.Name="CaptchaRecordsSummary";summary.SetBinding(TextBlock.TextProperty,nameof(MainViewModel.CaptchaRecordsSummary));status.Children.Add(summary);
+  var records=new ItemsControl{Name="CaptchaRecordList",FontSize=12,Foreground=Brush("#DCC8FF")};records.SetBinding(ItemsControl.ItemsSourceProperty,nameof(MainViewModel.CaptchaRecordLines));status.Children.Add(records);
+
+  var alerts=Section(root,"Alert preferences");
+  Check(alerts,"Show captcha notifications","CaptchaNotifications");
+  Check(alerts,"Pause workflow and schedule applies during an active captcha","CaptchaPauseApplies");
+  alerts.Children.Add(Text("Applies to settings Hexor applies itself; the running automation is not paused by Hexor.",12,false,"#B9ADCA"));
+  Check(alerts,"Require my confirmation before paused applies resume","CaptchaResumeConfirmation");
+  alerts.Children.Add(Text("When enabled, Hexor waits for confirmation after the active signal ends. Check the game before choosing Confirm apply resume.",12,false,"#B9ADCA"));
+  alerts.Children.Add(Button("Confirm apply resume",()=>Model.ConfirmChallengeResume()));
+
+  var visual=Section(root,"Visual challenge monitor","Optional extra layer: watches the game window for challenge overlays and notifies you.");
+  Check(visual,"Enable Visual Detection","VisualDetectionEnabled");
+  Check(visual,"Enable Notification Sound","VisualDetectionSound");
+  var sensitivityRow=new Grid{Margin=new Thickness(0,4,0,0)};sensitivityRow.ColumnDefinitions.Add(new());sensitivityRow.ColumnDefinitions.Add(new(){Width=new GridLength(180)});
+  var sensitivityLabel=Text(T("Detection sensitivity"),12,false,"#BAB2CC");sensitivityLabel.VerticalAlignment=VerticalAlignment.Center;sensitivityRow.Children.Add(sensitivityLabel);
+  var sensitivity=new Slider{Name="VisualDetectionSensitivitySlider",Minimum=0,Maximum=100,Width=170,IsSnapToTickEnabled=true,TickFrequency=5,HorizontalAlignment=HorizontalAlignment.Left};
+  AutomationProperties.SetName(sensitivity,T("Detection sensitivity"));
+  sensitivity.SetBinding(Slider.ValueProperty,new Binding("VisualDetectionSensitivity"){Mode=BindingMode.TwoWay,UpdateSourceTrigger=UpdateSourceTrigger.PropertyChanged});
+  Grid.SetColumn(sensitivity,1);sensitivityRow.Children.Add(sensitivity);visual.Children.Add(sensitivityRow);
+  var visualInterval=Input(visual,"Monitoring interval (seconds)","VisualDetectionIntervalText");visualInterval.Name="VisualDetectionIntervalInput";
+  visual.Children.Add(Text("Higher sensitivity lowers the match threshold. Templates are whole-overlay shape references you place in the patterns folder.",12,false,"#B9ADCA"));
+  var templateFolder=Input(visual,"Pattern templates folder","VisualDetectionTemplateFolder");templateFolder.Name="VisualDetectionTemplateFolderInput";
+  visual.Children.Add(Button("Open patterns folder",()=>{var folder=Model.VisualDetectionTemplateFolder;System.IO.Directory.CreateDirectory(folder);OpenPath(folder);}));
+  var visualStatus=Text("",13,true,"#DCC8FF");visualStatus.Name="VisualMonitorStatusText";visualStatus.SetBinding(TextBlock.TextProperty,"VisualMonitorStatusText");AutomationProperties.SetLiveSetting(visualStatus,AutomationLiveSetting.Polite);visual.Children.Add(visualStatus);
+  var visualDetail=Text("",12,false,"#B9ADCA");visualDetail.TextWrapping=TextWrapping.Wrap;visualDetail.SetBinding(TextBlock.TextProperty,"VisualMonitorDetail");visual.Children.Add(visualDetail);
+  visual.Children.Add(Button("View Detection Logs",()=>new VisualDetectionLogDialog(Model){Owner=this}.ShowDialog()));
  }
  private void Enhance(StackPanel root)
  {
-  var upgrade=Section(root,"Character Enhancement","Auto Equip / Enchant Combat Power Cap");
-  upgrade.Children.Add(Text("Controls AutoUpgradeMaxBattlePowerK independently from the gear enhancement level cap below.",12,false,"#B9ADCA"));
-  var selected=Text("",20,true,"#DCC8FF");selected.Name="AutoEquipCombatPowerValue";selected.SetBinding(TextBlock.TextProperty,new Binding("UpgradeMaxBattlePowerK"){StringFormat="{0}K"});upgrade.Children.Add(selected);
-  var battleSlider=new Slider{Name="AutoEquipCombatPowerSlider",Minimum=1,Maximum=100,TickFrequency=1,IsSnapToTickEnabled=true,Margin=new(0,10,0,8)};AutomationProperties.SetName(battleSlider,"Auto Equip and Enchant Combat Power Cap");battleSlider.SetBinding(Slider.ValueProperty,new Binding("UpgradeMaxBattlePowerK"){Mode=BindingMode.TwoWay,UpdateSourceTrigger=UpdateSourceTrigger.PropertyChanged});upgrade.Children.Add(battleSlider);
-  var battleCurrent=Text("",12,false,"#B9ADCA");battleCurrent.SetBinding(TextBlock.TextProperty,new Binding("CurrentUpgradeMaxBattlePowerK"){StringFormat="Saved registry value: {0}K"});upgrade.Children.Add(battleCurrent);upgrade.Children.Add(Button("Apply combat power cap",Model.SaveUpgradeMaxBattlePowerK));
+  var upgrade=Section(root,"Auto equip/enchant combat power cap","Controls AutoUpgradeMaxBattlePowerK independently from the gear enhancement level cap below.");
+  var capRow=new Grid{Margin=new Thickness(0,6,0,4)};capRow.ColumnDefinitions.Add(new());capRow.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
+  var battleSlider=new Slider{Name="AutoEquipCombatPowerSlider",Minimum=1,Maximum=100,TickFrequency=1,IsSnapToTickEnabled=true,VerticalAlignment=VerticalAlignment.Center};AutomationProperties.SetName(battleSlider,"Auto Equip and Enchant Combat Power Cap");battleSlider.SetBinding(Slider.ValueProperty,new Binding("UpgradeMaxBattlePowerK"){Mode=BindingMode.TwoWay,UpdateSourceTrigger=UpdateSourceTrigger.PropertyChanged});capRow.Children.Add(battleSlider);
+  var selected=Text("",18,true,"#DCC8FF");selected.Name="AutoEquipCombatPowerValue";selected.SetBinding(TextBlock.TextProperty,new Binding("UpgradeMaxBattlePowerK"){StringFormat="{0}K"});selected.Margin=new Thickness(16,0,0,0);Grid.SetColumn(selected,1);capRow.Children.Add(selected);
+  upgrade.Children.Add(capRow);
+  CheckToggle(upgrade,"EnchantBoundKinahOnly","Auto-enchant with bound Kinah only (keep at least 500,000)");
+  var battleCurrent=Text("",12,false,"#B9ADCA");battleCurrent.SetBinding(TextBlock.TextProperty,new Binding("CurrentUpgradeMaxBattlePowerK"){StringFormat="Saved registry value: {0}K"});upgrade.Children.Add(battleCurrent);
+  upgrade.Children.Add(Button("Apply combat power cap",Model.SaveUpgradeMaxBattlePowerK));
+
+  var gear=Section(root,"Gear enhancement level","AutoEnchantMaxPower remains a separate setting. Choose a value from 1100 to 1500.");
+  var current=Text("",13);current.SetBinding(TextBlock.TextProperty,new Binding("CurrentCap"){StringFormat="Saved registry value: {0}"});gear.Children.Add(current);
+  var input=Input(gear,"Gear enhancement level cap","EnhanceCap");
+  var slider=new Slider{Name="AutoEnchantMaxPowerSlider",Minimum=1100,Maximum=1500,TickFrequency=1,IsSnapToTickEnabled=true,Margin=new(0,10,0,16)};slider.SetBinding(Slider.ValueProperty,new Binding("EnhanceCap"){Mode=BindingMode.OneWay});slider.PreviewMouseLeftButtonUp+=(_,_)=>{Model.EnhanceCap=((int)slider.Value).ToString();input.GetBindingExpression(TextBox.TextProperty)?.UpdateTarget();};slider.PreviewKeyUp+=(_,_)=>{Model.EnhanceCap=((int)slider.Value).ToString();input.GetBindingExpression(TextBox.TextProperty)?.UpdateTarget();};gear.Children.Add(slider);gear.Children.Add(Button("Apply gear enhancement cap",Model.SaveCap));
 
   var extraction=Section(root,"Equipment Extraction","When the bag contains 100,000 or more Enhancement Stones, equipment that would normally be extracted is destroyed instead. Below 100,000, extraction continues normally.");
-  RegistryOptions(extraction,"Enhance",["DestroyInsteadOfExtract"]);
+  CheckToggle(extraction,"DestroyInsteadOfExtract","Destroy instead of extracting at 100,000 Enchantment Stones");
 
-  RegistryOptions(Section(root,"Membership Benefits","Verified independent REG_DWORD settings under LegionCommander\\Enhance."),"Enhance",["AutoBuyOdEnergy","AutoBuyReviveStone"]);
-  RegistryOptions(Section(root,"Auto Dungeon settings"),"Enhance",["AutoDungeonQuickJoinEnabled","AutoDailyWaveEnabled","AutoNightmareEnabled","AutoAwakenEnabled","AutoOdMorphEnabled"]);
+  var membership=Section(root,"Membership Benefits");
+  var memberRow=new StackPanel{Orientation=Orientation.Horizontal,Margin=new(0,2,0,2)};
+  CheckToggle(memberRow,"AutoBuyOdEnergy","Automatically buy Od Energy").Margin=new Thickness(0,0,32,0);
+  CheckToggle(memberRow,"AutoBuyReviveStone","Automatically buy Resurrection Stones");
+  membership.Children.Add(memberRow);
 
-  var gear=Section(root,"Gear enhancement level","AutoEnchantMaxPower remains a separate setting. Choose a value from 1100 to 1500.");var current=Text("",13);current.SetBinding(TextBlock.TextProperty,new Binding("CurrentCap"){StringFormat="Saved registry value: {0}"});gear.Children.Add(current);var input=Input(gear,"Gear enhancement level cap","EnhanceCap");var slider=new Slider{Name="AutoEnchantMaxPowerSlider",Minimum=1100,Maximum=1500,TickFrequency=1,IsSnapToTickEnabled=true,Margin=new(0,10,0,16)};slider.SetBinding(Slider.ValueProperty,new Binding("EnhanceCap"){Mode=BindingMode.OneWay});slider.PreviewMouseLeftButtonUp+=(_,_)=>{Model.EnhanceCap=((int)slider.Value).ToString();input.GetBindingExpression(TextBox.TextProperty)?.UpdateTarget();};slider.PreviewKeyUp+=(_,_)=>{Model.EnhanceCap=((int)slider.Value).ToString();input.GetBindingExpression(TextBox.TextProperty)?.UpdateTarget();};gear.Children.Add(slider);gear.Children.Add(Button("Apply gear enhancement cap",Model.SaveCap));
+  var shop=Section(root,"Shop Exchange","Coin-shop exchanges shared by the verified five toggles.");
+  var shopGrid=new Grid();shopGrid.ColumnDefinitions.Add(new(){Width=new GridLength(170)});shopGrid.ColumnDefinitions.Add(new());shopGrid.ColumnDefinitions.Add(new());
+  var stigmaHeader=Text(T("Stigma Skill Points (Stigma Shards)"),12,false,"#BAB2CC");Grid.SetColumn(stigmaHeader,1);shopGrid.Children.Add(stigmaHeader);
+  var daevHeader=Text(T("Daevanion Points (up to 10)"),12,false,"#BAB2CC");Grid.SetColumn(daevHeader,2);shopGrid.Children.Add(daevHeader);
+  AddShopRow(shopGrid,0,"Nightmare Coins","CoinShopNightmareStigma","CoinShopNightmareDaevanion");
+  AddShopRow(shopGrid,1,"Shugo Coins (Festival)","CoinShopFestivalStigma","CoinShopFestivalDaevanion");
+  AddShopRow(shopGrid,2,"Abyss Points","CoinShopAbyssStigma",null);
+  shop.Children.Add(shopGrid);
+
+  var pet=Section(root,"Pet");
+  CheckToggle(pet,"GenusInsightAutoAnalyze","Auto-reroll pet (Genus Insight analysis)");
  }
+
+ private void AddShopRow(Grid grid,int index,string rowLabel,string stigmaToggle,string? daevanionToggle)
+ {
+  var row=index+1;
+  grid.RowDefinitions.Add(new(){Height=GridLength.Auto});
+  var label=Text(T(rowLabel),13,false,"#F1EFF8");label.VerticalAlignment=VerticalAlignment.Center;Grid.SetRow(label,row);grid.Children.Add(label);
+  var holding=new StackPanel();
+  var stigma=CheckToggle(holding,stigmaToggle);holding.Children.Remove(stigma);
+  stigma.Margin=new(0,2,24,2);Grid.SetRow(stigma,row);Grid.SetColumn(stigma,1);grid.Children.Add(stigma);
+  if(daevanionToggle!=null)
+  {
+   var daev=CheckToggle(holding,daevanionToggle);holding.Children.Remove(daev);
+   daev.Margin=new(0,2,0,2);Grid.SetRow(daev,row);Grid.SetColumn(daev,2);grid.Children.Add(daev);
+  }
+ }
+ private ComboBox SelectOption<TValue>(Panel panel, string label, string name, IReadOnlyList<(TValue Value, string Label)> options,
+     string path, BindingMode mode = BindingMode.TwoWay)
+ {
+  panel.Children.Add(Text(T(label), 13, true));
+  var selector = new ComboBox
+  {
+   Name = name, ItemsSource = options.Select(option => new SelectionOption<TValue>(option.Value, T(option.Label))).ToArray(),
+   SelectedValuePath = nameof(SelectionOption<TValue>.Value), HorizontalAlignment = HorizontalAlignment.Left
+  };
+  AutomationProperties.SetName(selector, T(label));
+  selector.SetBinding(ComboBox.SelectedValueProperty, new Binding(path) { Mode = mode });
+  panel.Children.Add(selector);
+  return selector;
+ }
+
+ private sealed record SelectionOption<T>(T Value, string Label)
+ {
+  public override string ToString() => Label;
+ }
+
+ private void CharacterDefault(Panel panel, string label, string key, string property, IReadOnlyList<(int, string)> options)
+ {
+  var selector = SelectOption(panel, label, key + "Selector", options, property, BindingMode.OneWay);
+  selector.SetBinding(IsEnabledProperty, new Binding(nameof(MainViewModel.OriginalConfigurationReady)));
+  var feedback = Text("", 13, false, "#CDB6F5");
+  AutomationProperties.SetLiveSetting(feedback, AutomationLiveSetting.Polite);
+  var apply = Button("Apply " + label.ToLowerInvariant(), () =>
+  {
+   if (selector.SelectedValue is int value)
+   {
+    Model.SaveCharacterDefault(key, value);
+    selector.GetBindingExpression(ComboBox.SelectedValueProperty)?.UpdateTarget();
+    feedback.Text = Model.Status;
+   }
+  });
+  apply.Name = "Apply" + key;
+  apply.SetBinding(IsEnabledProperty, new Binding(nameof(MainViewModel.OriginalConfigurationReady)));
+  panel.Children.Add(apply);
+  panel.Children.Add(feedback);
+ }
+
+ private void AddEditorStatus(Panel panel, string path)
+ {
+  var statusText = Text("", 13, false, "#CDB6F5");
+  statusText.SetBinding(TextBlock.TextProperty, path);
+  AutomationProperties.SetLiveSetting(statusText, AutomationLiveSetting.Polite);
+  panel.Children.Add(statusText);
+ }
+
+ private void DailyActivities(StackPanel root)
+ {
+  var workspace = new Grid();
+  workspace.ColumnDefinitions.Add(new ColumnDefinition());
+  workspace.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(14) });
+  workspace.ColumnDefinitions.Add(new ColumnDefinition());
+  root.Children.Add(workspace);
+  var sequenceColumn = new StackPanel();
+  var detailColumn = new StackPanel();
+  Grid.SetColumn(detailColumn, 2);
+  workspace.Children.Add(sequenceColumn);
+  workspace.Children.Add(detailColumn);
+
+  var sequence = Section(sequenceColumn, "Instruction sequence");
+  var notice = Text("", 12, false, "#B9ADCA");
+  notice.SetBinding(TextBlock.TextProperty, nameof(MainViewModel.WorkflowNotice));
+  sequence.Children.Add(notice);
+  var steps = new ListBox { Name = "DailyWorkflowSteps", MinHeight = 100, MaxHeight = 250,
+      Style = (Style)FindResource("WorkflowListStyle") };
+  ScrollViewer.SetHorizontalScrollBarVisibility(steps, ScrollBarVisibility.Disabled);
+  AutomationProperties.SetName(steps, T("Instruction sequence"));
+  steps.SetBinding(ItemsControl.ItemsSourceProperty, new Binding("Preferences.Instructions"));
+  steps.SetBinding(ListBox.SelectedItemProperty, new Binding(nameof(MainViewModel.SelectedInstruction)) { Mode = BindingMode.TwoWay });
+  steps.ItemTemplate = (DataTemplate)System.Windows.Markup.XamlReader.Parse("""
+   <DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+     <Grid>
+       <Grid.ColumnDefinitions><ColumnDefinition Width="36"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+       <TextBlock Foreground="#B9ADCA" TextWrapping="NoWrap" Text="{Binding SequenceNumber}" />
+       <TextBlock Grid.Column="1" Text="{Binding ActivityLabel}" />
+     </Grid>
+   </DataTemplate>
+   """);
+  sequence.Children.Add(steps);
+  var actions = new WrapPanel();
+  foreach (var (label, command) in new[]
+  {
+   ("Add", Model.AddCommand), ("Duplicate", Model.DuplicateCommand), ("Delete", Model.DeleteCommand),
+   ("Move up", Model.UpCommand), ("Move down", Model.DownCommand)
+  })
+   actions.Children.Add(new Button { Content = T(label), Command = command, Margin = new Thickness(0, 7, 6, 0), Padding = new Thickness(10, 6, 10, 6), MinHeight = 36 });
+  sequence.Children.Add(actions);
+  var workflowFiles = new WrapPanel();
+  workflowFiles.Children.Add(Button("Import workflow", ImportWorkflow));
+  workflowFiles.Children.Add(Button("Export workflow", ExportWorkflow));
+  workflowFiles.Children.Add(Button("Load default sequence", () =>
+  {
+   if (MessageBox.Show(this, "Replace the current draft sequence with the default sequence?",
+       "Default workflow", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
+    Model.LoadDefaultWorkflow();
+  }));
+  sequence.Children.Add(new Expander { Header = "Workflow files and defaults", Content = workflowFiles, Margin = new Thickness(2, 10, 0, 0) });
+
+  var detail = Section(detailColumn, "Activity settings");
+  detail.SetBinding(DataContextProperty, new Binding(nameof(MainViewModel.SelectedInstruction)));
+  var showSelected = new Style(typeof(StackPanel));
+  var noSelection = new DataTrigger { Binding = new Binding("."), Value = null };
+  noSelection.Setters.Add(new Setter(IsEnabledProperty, false));
+  showSelected.Triggers.Add(noSelection);
+  detail.Style = showSelected;
+  Check(detail, "Enabled", nameof(Instruction.Enabled));
+  SelectOption(detail, "Activity type", "DailyActivityType",
+      InstructionPresentation.Options.Select(option => (option.Value, option.Label)).ToArray(), nameof(Instruction.Type));
+  var gathering = new StackPanel();
+  var gatheringStyle = new Style(typeof(StackPanel));
+  gatheringStyle.Setters.Add(new Setter(VisibilityProperty, Visibility.Collapsed));
+  var isGathering = new DataTrigger { Binding = new Binding(nameof(Instruction.Type)), Value = InstructionType.Gathering };
+  isGathering.Setters.Add(new Setter(VisibilityProperty, Visibility.Visible));
+  gatheringStyle.Triggers.Add(isGathering);
+  gathering.Style = gatheringStyle;
+  Input(gathering, "Gathering duration minimum (minutes)", nameof(Instruction.MinimumText));
+  Input(gathering, "Gathering duration maximum (minutes)", nameof(Instruction.MaximumText));
+  Check(gathering, "Reset timer", nameof(Instruction.ResetTimer));
+  detail.Children.Add(gathering);
+
+  var patrol = Check(detail, "Smart patrol", nameof(Instruction.SmartPatrol));
+  var patrolStyle = new Style(typeof(CheckBox), Application.Current.TryFindResource(typeof(CheckBox)) as Style);
+  patrolStyle.Setters.Add(new Setter(VisibilityProperty, Visibility.Collapsed));
+  var isKinah = new DataTrigger { Binding = new Binding(nameof(Instruction.Type)), Value = InstructionType.KinahFarming };
+  isKinah.Setters.Add(new Setter(VisibilityProperty, Visibility.Visible));
+  patrolStyle.Triggers.Add(isKinah);
+  patrol.Style = patrolStyle;
+
+  var completion = Section(detailColumn, "Gathering & completion");
+  SelectOption(completion, "After all characters finish", "DailyWorkflowCompletion",
+      InstructionPresentation.CompletionOptions.Select(option => (option.Value, option.Label)).ToArray(), "Preferences.AfterFinish");
+  completion.Children.Add(PrimaryEditorButton("ApplyDailyWorkflow", "Apply instruction settings", Model.SaveDailyCommand));
+  AddEditorStatus(completion, nameof(MainViewModel.WorkflowEditorStatus));
+ }
+
+ private void ImportWorkflow()
+ {
+  var dialog = new OpenFileDialog { Filter = "JSON workflow (*.json)|*.json" };
+  if (dialog.ShowDialog(this) != true) return;
+  if (MessageBox.Show(this, "Replace the current draft sequence with the selected workflow?",
+      "Import workflow", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
+   Model.ImportWorkflow(dialog.FileName);
+ }
+
+ private void ExportWorkflow()
+ {
+  var dialog = new SaveFileDialog
+  {
+   Filter = "JSON workflow (*.json)|*.json", FileName = "Hexor-workflow.json", OverwritePrompt = false
+  };
+  if (dialog.ShowDialog(this) == true) Model.ExportWorkflow(dialog.FileName);
+ }
+
+ private void WorkSchedule(StackPanel root)
+ {
+  var schedule = Section(root, "Schedule limits", "The saved schedule is applied when the game or the next task starts.");
+  Check(schedule, "Enable Work Schedule", "Preferences.ScheduleEnabled");
+  Input(schedule, "Maximum accounts online", nameof(MainViewModel.MaxAccounts));
+  AddScheduleRange(schedule, "Work duration", nameof(MainViewModel.WorkMin), nameof(MainViewModel.WorkMax));
+  AddScheduleRange(schedule, "Rest duration", nameof(MainViewModel.RestMin), nameof(MainViewModel.RestMax));
+  schedule.Children.Add(PrimaryEditorButton("SaveWorkSchedule", "Save schedule", Model.SaveScheduleCommand));
+  AddEditorStatus(schedule, nameof(MainViewModel.ScheduleEditorStatus));
+ }
+
+ private Button PrimaryEditorButton(string name, string label, ICommand command) => new()
+ {
+  Name = name, Content = T(label), Command = command, HorizontalAlignment = HorizontalAlignment.Left,
+  Background = Brush("#6942A8"), Margin = new Thickness(0, 12, 0, 6)
+ };
+
+ private void AddScheduleRange(Panel panel, string label, string minimumPath, string maximumPath)
+ {
+  var pair = new Grid();
+  pair.ColumnDefinitions.Add(new ColumnDefinition());
+  pair.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(14) });
+  pair.ColumnDefinitions.Add(new ColumnDefinition());
+  var left = new StackPanel();
+  var right = new StackPanel();
+  Grid.SetColumn(right, 2);
+  pair.Children.Add(left);
+  pair.Children.Add(right);
+  Input(left, label + " minimum (minutes)", minimumPath);
+  Input(right, label + " maximum (minutes)", maximumPath);
+  panel.Children.Add(pair);
+ }
+
  private void Festival(StackPanel root){RegistryOptions(Section(root,"Shugo Festival"),"MiniGame");}
 }
 

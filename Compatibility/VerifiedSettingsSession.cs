@@ -65,6 +65,30 @@ public sealed class VerifiedSettingsSession(ILegionConfigurationService service,
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException or System.Security.SecurityException)
         { throw new PartialSettingsWriteException(); }
     }
+    public void SaveAutoTaskNumber(string registryName, int value)
+    {
+        var options = registryName switch
+        {
+            "CharacterRace" => LegionCommanderFeatureSettings.Races,
+            "CharacterJob" => LegionCommanderFeatureSettings.Jobs,
+            _ => throw new InvalidDataException("Unknown character setting.")
+        };
+        if (!options.Any(option => option.Value == value))
+            throw new InvalidDataException("Choose a supported character setting value.");
+
+        var mirror = registry.Inspect("AutoTask", registryName);
+        if (!mirror.Supported || (mirror.Exists && !options.Any(option => option.Value == mirror.Value)))
+            throw new InvalidDataException("The existing registry value uses an unsupported encoding and was preserved.");
+
+        Document = Service.SaveScalars(Document, new Dictionary<string, string>
+        {
+            [AutoTaskKeys[registryName]] = value.ToString(CultureInfo.InvariantCulture)
+        });
+        try { registry.MirrorAutoTaskNumber(registryName, value); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException or System.Security.SecurityException)
+        { throw new PartialSettingsWriteException(); }
+    }
+
     public string RetryMirror()
     {
         if (!Ready) throw new InvalidDataException(Document.Message);

@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 [CmdletBinding()]
 param(
  [Parameter(Mandatory)][ValidatePattern('^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$')][string]$Version,
@@ -12,6 +12,11 @@ param(
 )
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
+if([version]$Version -ge [version]'1.0.14'){
+ if($Version -cne '1.0.14'){throw 'The reviewed qualification amendment is scoped to v1.0.14; review a new release policy before extending it.'}
+ $gateEvidence=Join-Path $root ('.build/preparation-gate-'+[guid]::NewGuid().ToString('N'))
+ & (Join-Path $PSScriptRoot 'Test-HexorConsoleRelease.ps1') -Phase Preparation -ResultDirectory $gateEvidence
+}
 $keyPath=(Resolve-Path -LiteralPath $PrivateKeyPath).Path
 if($keyPath.StartsWith($root+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Private key must be outside the repository'}
 $aioRoot=[IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $root) 'Aion AIO'))
@@ -43,9 +48,9 @@ try{
  if($LASTEXITCODE -ne 0){throw 'Updater tests failed'}
  & (Join-Path $PSScriptRoot 'Test-HexorGitHubPublishing.ps1')
  $payload=Join-Path $out 'payload'
- & dotnet publish (Join-Path $root 'Hexor.ControlCenter.csproj') -t:Rebuild -c Release -r win-x64 --self-contained true "-p:Version=$Version" -p:DebugType=None -p:DebugSymbols=false -o $payload
+ & dotnet publish (Join-Path $root 'Hexor.ControlCenter.csproj') -t:Rebuild -c Release -r win-x64 --self-contained true "-p:Version=$Version" -p:DebugType=None -p:DebugSymbols=false -p:IncludeSourceRevisionInInformationalVersion=false -o $payload
  if($LASTEXITCODE -ne 0){throw 'Control Center publish failed'}
- & dotnet publish (Join-Path $root 'Updater\Hexor.Updater.csproj') -t:Rebuild -c Release -r win-x64 --self-contained true "-p:Version=$Version" -p:DebugType=None -p:DebugSymbols=false -o $payload
+ & dotnet publish (Join-Path $root 'Updater\Hexor.Updater.csproj') -t:Rebuild -c Release -r win-x64 --self-contained true "-p:Version=$Version" -p:DebugType=None -p:DebugSymbols=false -p:IncludeSourceRevisionInInformationalVersion=false -o $payload
  if($LASTEXITCODE -ne 0){throw 'Helper publish failed'}
  $files=@(Get-ChildItem -LiteralPath $payload -File -Recurse)
  if($files.Count -ne 2 -or @($files | Where-Object Name -notin @('Hexor-AION-Control-Center.exe','Hexor.Updater.exe')).Count){throw 'Unexpected package files'}
@@ -54,6 +59,11 @@ try{
   $actual=[Diagnostics.FileVersionInfo]::GetVersionInfo($file.FullName)
   $actualVersion=[version]::new($actual.FileMajorPart,$actual.FileMinorPart,$actual.FileBuildPart)
   if($actualVersion -ne $expectedVersion){throw "Published executable version metadata does not match ${Version}: $($file.Name) reports $actualVersion"}
+ }
+ if($Version -ceq '1.0.14'){
+  Import-Module (Join-Path $PSScriptRoot 'HexorReleaseQualification.psm1') -Force
+  $signingDisposition=Test-HexorUnsignedV1014 (Join-Path $root '.build/final-v1.0.14-20261116/unsigned-distribution-owner-exception.json') $payload
+  Write-HexorGateEvidence (Join-Path $out 'candidate-authenticode-exception.json') $signingDisposition
  }
  $package=Join-Path $out "Hexor-$Version-win-x64.zip"
  Compress-Archive -LiteralPath $files.FullName -DestinationPath $package
@@ -64,6 +74,9 @@ try{
  @{Payload=[Convert]::ToBase64String($bytes);Signature=[Convert]::ToBase64String($signature)} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $out 'latest.json') -Encoding utf8
  "$hash  $([IO.Path]::GetFileName($package))" | Set-Content -LiteralPath (Join-Path $out 'SHA256SUMS.txt')
  $notes | Set-Content -LiteralPath (Join-Path $out 'RELEASE-NOTES.md')
+ if($Version -ceq '1.0.14'){
+  & (Join-Path $PSScriptRoot 'Test-HexorConsoleRelease.ps1') -Phase Package -ReleaseDirectory $out -ResultDirectory (Join-Path $root ('.build/package-gate-'+[guid]::NewGuid().ToString('N')))
+ }
  Write-Output "Release prepared at $out. GitHub asset: $DownloadUrl. Stable manifest: $($trust.ManifestUrl)."
 }finally{$rsa.Dispose()}
 if($PublishGitHub){
