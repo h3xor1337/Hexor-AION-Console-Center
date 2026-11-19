@@ -34,7 +34,10 @@ function New-TestRelease([string]$Name) {
     $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
     $bytes = New-TestManifest '1.0.1' $hash 'Mock release notes'
     [IO.File]::WriteAllBytes((Join-Path $releaseDirectory 'latest.json'), $bytes)
-    [IO.File]::WriteAllText((Join-Path $releaseDirectory 'SHA256SUMS.txt'), "$hash  Hexor-1.0.1-win-x64.zip")
+    $companionPath = Join-Path $releaseDirectory 'Hexor-Aion2-Updater-1.0.1-win-x64.zip'
+    [IO.File]::WriteAllBytes($companionPath, [Text.Encoding]::UTF8.GetBytes('Isolated companion updater test package; no executable is built or installed.'))
+    $companionHash = (Get-FileHash -LiteralPath $companionPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    [IO.File]::WriteAllText((Join-Path $releaseDirectory 'SHA256SUMS.txt'), "$hash  Hexor-1.0.1-win-x64.zip`n$companionHash  Hexor-Aion2-Updater-1.0.1-win-x64.zip")
     [IO.File]::WriteAllText((Join-Path $releaseDirectory 'RELEASE-NOTES.md'), 'Mock release notes')
     return $releaseDirectory
 }
@@ -120,7 +123,7 @@ function Set-TestState($State) {
         function script:Invoke-HexorPublicAssetVerification {
             param([string]$Root, [string]$ManifestPath, [string]$TrustPath, [string]$DownloadDirectory, $Configuration, [object[]]$Files)
             $state = $script:TestState
-            if ($state.Release.draft -or $Files.Count -ne 4 -or $state.Release.assets.Count -ne 4) { throw 'Public verification ran before all four assets were published.' }
+            if ($state.Release.draft -or $Files.Count -ne 5 -or $state.Release.assets.Count -ne 5) { throw 'Public verification ran before all five assets were published.' }
             $state.Calls.Add('verify-public-assets')
             if ($state.PublicVerificationFails) { throw 'Injected anonymous download/hash failure' }
         }
@@ -159,7 +162,7 @@ try {
     Assert-True ($state.Puts -eq 0) 'no commit after public verification failure'
     $state.PublicVerificationFails = $false
     Invoke-TestPublish $directory
-    Assert-True ($state.Puts -eq 1 -and (@($state.Calls | Where-Object { $_ -like 'upload:*' })).Count -eq 4) 'retry of published assets does not upload again'
+    Assert-True ($state.Puts -eq 1 -and (@($state.Calls | Where-Object { $_ -like 'upload:*' })).Count -eq 5) 'retry of published assets does not upload again'
     $script:passed++; Write-Output 'PASS: a failed public download can resume the prepared release without republishing assets'
 
     $state = New-TestState $directory; $state.FailUploadName = 'latest.json'; Set-TestState $state
@@ -167,7 +170,7 @@ try {
     Assert-True ($state.Release.draft -and $state.Puts -eq 0 -and $state.Release.assets.Count -eq 1) 'interrupted upload retains only uploaded draft asset'
     $state.FailUploadName = $null
     Invoke-TestPublish $directory
-    Assert-True ($state.Puts -eq 1 -and $state.Calls.Contains('draft-download:Hexor-1.0.1-win-x64.zip') -and (@($state.Calls | Where-Object { $_ -like 'upload:*' })).Count -eq 4) 'draft retry compares existing bytes and uploads missing assets only'
+    Assert-True ($state.Puts -eq 1 -and $state.Calls.Contains('draft-download:Hexor-1.0.1-win-x64.zip') -and (@($state.Calls | Where-Object { $_ -like 'upload:*' })).Count -eq 5) 'draft retry compares existing bytes and uploads missing assets only'
     $script:passed++; Write-Output 'PASS: draft upload resumes without clobbering existing assets'
 
     $state = New-TestState $directory; $state.FailUploadName = 'latest.json'; Set-TestState $state

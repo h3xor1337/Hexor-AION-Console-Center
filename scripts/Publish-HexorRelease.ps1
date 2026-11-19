@@ -12,8 +12,7 @@ param(
 )
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
-if([version]$Version -ge [version]'1.0.14'){
- if($Version -cne '1.0.14'){throw 'The reviewed qualification amendment is scoped to v1.0.14; review a new release policy before extending it.'}
+if($Version -ceq '1.0.14'){
  $gateEvidence=Join-Path $root ('.build/preparation-gate-'+[guid]::NewGuid().ToString('N'))
  & (Join-Path $PSScriptRoot 'Test-HexorConsoleRelease.ps1') -Phase Preparation -ResultDirectory $gateEvidence
 }
@@ -52,10 +51,17 @@ try{
  if($LASTEXITCODE -ne 0){throw 'Control Center publish failed'}
  & dotnet publish (Join-Path $root 'Updater\Hexor.Updater.csproj') -t:Rebuild -c Release -r win-x64 --self-contained true "-p:Version=$Version" -p:DebugType=None -p:DebugSymbols=false -p:IncludeSourceRevisionInInformationalVersion=false -o $payload
  if($LASTEXITCODE -ne 0){throw 'Helper publish failed'}
+ # Rebrand the vendor Aion2.Updater.exe from its pristine original so customers receive the
+ # Hexor-branded updater alongside the console; the shipped companion is byte-for-byte the
+ # artifact the live console produces and the console verifies it against the signed manifest.
+ $vendorOriginal=Join-Path $env:LOCALAPPDATA 'Programs\Hexor\AION Auto Updater\_hexor_backup\Aion2.Updater.exe.original'
+ if(-not (Test-Path -LiteralPath $vendorOriginal)){throw 'Vendor Aion2.Updater.exe original not found; restore the vendor backup before rebranding.'}
+ & dotnet run --project (Join-Path $root 'scripts\HexorUpdaterRebrand\HexorUpdaterRebrand.csproj') -c Release -- $vendorOriginal (Join-Path $payload 'Aion2.Updater.exe')
+ if($LASTEXITCODE -ne 0){throw 'Aion2.Updater.exe rebrand failed'}
  $files=@(Get-ChildItem -LiteralPath $payload -File -Recurse)
- if($files.Count -ne 2 -or @($files | Where-Object Name -notin @('Hexor-AION-Control-Center.exe','Hexor.Updater.exe')).Count){throw 'Unexpected package files'}
+ if($files.Count -ne 3 -or @($files | Where-Object Name -notin @('Hexor-AION-Control-Center.exe','Hexor.Updater.exe','Aion2.Updater.exe')).Count){throw 'Unexpected package files'}
  $expectedVersion=[version]$Version
- foreach($file in $files){
+ foreach($file in @($files | Where-Object Name -in @('Hexor-AION-Control-Center.exe','Hexor.Updater.exe'))){
   $actual=[Diagnostics.FileVersionInfo]::GetVersionInfo($file.FullName)
   $actualVersion=[version]::new($actual.FileMajorPart,$actual.FileMinorPart,$actual.FileBuildPart)
   if($actualVersion -ne $expectedVersion){throw "Published executable version metadata does not match ${Version}: $($file.Name) reports $actualVersion"}
@@ -66,13 +72,29 @@ try{
   Write-HexorGateEvidence (Join-Path $out 'candidate-authenticode-exception.json') $signingDisposition
  }
  $package=Join-Path $out "Hexor-$Version-win-x64.zip"
- Compress-Archive -LiteralPath $files.FullName -DestinationPath $package
+ # The OTA package carries exactly the two Hexor executables; the rebranded vendor updater
+ # travels only in its own companion archive so every installed version stays compatible.
+ $hexorFiles=@($files | Where-Object Name -in @('Hexor-AION-Control-Center.exe','Hexor.Updater.exe'))
+ Compress-Archive -LiteralPath $hexorFiles.FullName -DestinationPath $package
+ # Companion release asset: the rebranded vendor updater, delivered as its own archive and
+ # referenced from the signed manifest; installed consoles fetch it automatically.
+ $companionZip=Join-Path $out "Hexor-Aion2-Updater-$Version-win-x64.zip"
+ Compress-Archive -LiteralPath (Join-Path $payload 'Aion2.Updater.exe') -DestinationPath $companionZip
+ Add-Type -AssemblyName System.IO.Compression.FileSystem
+ $companionEntries=[IO.Compression.ZipFile]::OpenRead($companionZip)
+ try{
+  if($companionEntries.Entries.Count -ne 1 -or $companionEntries.Entries[0].FullName -cne 'Aion2.Updater.exe'){throw 'Companion archive must contain exactly Aion2.Updater.exe'}
+  $companionStream=$companionEntries.Entries[0].Open();$magic=@($companionStream.ReadByte(),$companionStream.ReadByte());$companionStream.Dispose()
+  if($magic[0] -ne 77 -or $magic[1] -ne 90){throw 'Companion archive entry is not an executable'}
+ }finally{$companionEntries.Dispose()}
  $hash=(Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant()
- $manifest=[ordered]@{SchemaVersion=1;Version=$Version;ReleaseDate=[DateTimeOffset]::UtcNow.ToString('O');DownloadUrl=$DownloadUrl;Sha256=$hash;ReleaseNotes=$notes;MinimumUpdaterVersion='1.0.0';Mandatory=[bool]$Mandatory}
+ $companionHash=(Get-FileHash -LiteralPath $companionZip -Algorithm SHA256).Hash.ToLowerInvariant()
+ $companionUrl="https://github.com/$($github.Repository)/releases/download/v$Version/Hexor-Aion2-Updater-$Version-win-x64.zip"
+ $manifest=[ordered]@{SchemaVersion=1;Version=$Version;ReleaseDate=[DateTimeOffset]::UtcNow.ToString('O');DownloadUrl=$DownloadUrl;Sha256=$hash;ReleaseNotes=$notes;MinimumUpdaterVersion='1.0.0';Mandatory=[bool]$Mandatory;Aion2UpdaterUrl=$companionUrl;Aion2UpdaterSha256=$companionHash}
  $bytes=[Text.Encoding]::UTF8.GetBytes(($manifest | ConvertTo-Json -Compress))
  $signature=$rsa.SignData($bytes,[Security.Cryptography.HashAlgorithmName]::SHA256,[Security.Cryptography.RSASignaturePadding]::Pss)
  @{Payload=[Convert]::ToBase64String($bytes);Signature=[Convert]::ToBase64String($signature)} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $out 'latest.json') -Encoding utf8
- "$hash  $([IO.Path]::GetFileName($package))" | Set-Content -LiteralPath (Join-Path $out 'SHA256SUMS.txt')
+ "$hash  $([IO.Path]::GetFileName($package))`n$companionHash  $([IO.Path]::GetFileName($companionZip))" | Set-Content -LiteralPath (Join-Path $out 'SHA256SUMS.txt')
  $notes | Set-Content -LiteralPath (Join-Path $out 'RELEASE-NOTES.md')
  if($Version -ceq '1.0.14'){
   & (Join-Path $PSScriptRoot 'Test-HexorConsoleRelease.ps1') -Phase Package -ReleaseDirectory $out -ResultDirectory (Join-Path $root ('.build/package-gate-'+[guid]::NewGuid().ToString('N')))

@@ -8,6 +8,7 @@ using System.Windows.Controls;
 namespace Hexor.Updates;
 public sealed class UpdatePanel : StackPanel
 {
+ static UpdatePanel()=>Aion2UpdaterSync.LogSink=message=>Hexor.Diagnostics.Log("ota",message);
  readonly TextBlock current=new(),latest=new(){Text="Latest Version: Checking…"},status=new(){Text="Checking update",TextWrapping=TextWrapping.Wrap};
  readonly ProgressBar progress=new(){Height=8,Margin=new Thickness(0,8,0,8),IsIndeterminate=true};
  readonly Button check=new(){Content="Check for Updates"};
@@ -44,6 +45,8 @@ public sealed class UpdatePanel : StackPanel
    stage=OtaCheckStage.Presentation;
    latest.Text="Latest Version: "+release.Version;var newer=UpdateCore.ParseVersion(release.Version)>UpdateCore.ParseVersion(Installed);status.Text=newer?"Update available":"Up to date";
    lastResult=(latest.Text,status.Text);
+   stage=OtaCheckStage.CompanionSync;
+   await Aion2UpdaterSync.ReconcileAsync(release,AppContext.BaseDirectory,cancellation.Token);
    if(newer&&showAvailable){var dialog=new UpdateAvailableDialog(Installed,release,d=>{installCallbackInvoked=true;return Install(d);}){Owner=Window.GetWindow(this)};dialog.ShowDialog();}
   }
   catch(Exception ex){Hexor.Diagnostics.Log("ota",OtaCheckDiagnostics.Format(stage,ex,installCallbackInvoked),DiagnosticSeverity.Error);status.Text="Unable to check for updates. Hexor remains available; try again later.";latest.Text="Latest Version: Not available";lastResult=(latest.Text,status.Text);}
@@ -60,7 +63,7 @@ public sealed class UpdatePanel : StackPanel
    await UpdateCore.Download(release.DownloadUrl,package,600_000_000,new Progress<DownloadProgress>(p=>dialog.SetStage("Downloading","Downloading the signed Hexor update…",p)),cancellation.Token);
    dialog.SetStage("Verifying signature","Checking the signed manifest and package SHA-256…");await Task.Run(()=>{UpdateCore.Verify(envelope,trust.PublicKeyPem);UpdateCore.VerifyPackage(package,release);},cancellation.Token);Hexor.Diagnostics.Log("ota","package-valid; version="+release.Version);
    dialog.SetStage("Preparing installation","Validating the external updater and preparing a safe transaction…");
-   var manifest=Path.Combine(root,"manifest.json");await File.WriteAllTextAsync(manifest,envelope,cancellation.Token);var helper=Path.Combine(root,"Hexor.Updater.exe");File.Copy(Path.Combine(AppContext.BaseDirectory,"Hexor.Updater.exe"),helper);
+   var manifest=Path.Combine(root,"manifest.json");await File.WriteAllTextAsync(manifest,envelope,cancellation.Token);var helper=Path.Combine(root,"Hexor.Updater.exe");File.Copy(ResolveUpdaterHelper(),helper);
    dialog.SetStage("Installing","Hexor will close now. The updater will safely replace the verified files.");
    var start=new ProcessStartInfo(helper){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=root};foreach(var arg in new[]{AppContext.BaseDirectory,manifest,package,Environment.ProcessId.ToString(),"exit"})start.ArgumentList.Add(arg);
    _=Process.Start(start)??throw new IOException("Could not start Hexor updater.");Hexor.Diagnostics.Log("ota","installer-started; restart=false");dialog.CompleteAndClose();Hexor.App.RequestShutdown("ota-install");
@@ -69,4 +72,13 @@ public sealed class UpdatePanel : StackPanel
   finally{installing=false;check.IsEnabled=true;}
  }
  static string SafeMessage(Exception ex)=>ex switch{HttpRequestException=>"The update could not be downloaded.",UnauthorizedAccessException=>"Hexor does not have permission to prepare the update.",IOException=>"The update files could not be prepared. Check free disk space and file permissions.",_=>"The signed update could not be verified or prepared."};
+ // The helper ships beside the console; the desktop launcher copy resolves it from the OTA-managed folder.
+ internal static string ResolveUpdaterHelper()
+ {
+  var local=Path.Combine(AppContext.BaseDirectory,"Hexor.Updater.exe");
+  if(File.Exists(local))return local;
+  var managed=Path.Combine(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(AppContext.BaseDirectory)))!,"Hexor Control Center","Hexor.Updater.exe");
+  if(File.Exists(managed))return managed;
+  throw new FileNotFoundException("Hexor.Updater.exe was not found next to the running application.");
+ }
 }

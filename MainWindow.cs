@@ -504,7 +504,7 @@ public sealed class MainWindow : Window
   membership.Children.Add(memberRow);
 
   var shop=Section(root,"Shop Exchange","Coin-shop exchanges shared by the verified five toggles.");
-  var shopGrid=new Grid();shopGrid.ColumnDefinitions.Add(new(){Width=new GridLength(170)});shopGrid.ColumnDefinitions.Add(new());shopGrid.ColumnDefinitions.Add(new());
+  var shopGrid=new Grid();shopGrid.RowDefinitions.Add(new(){Height=GridLength.Auto});shopGrid.ColumnDefinitions.Add(new(){Width=new GridLength(170)});shopGrid.ColumnDefinitions.Add(new());shopGrid.ColumnDefinitions.Add(new());
   var stigmaHeader=Text(T("Stigma Skill Points (Stigma Shards)"),12,false,"#BAB2CC");Grid.SetColumn(stigmaHeader,1);shopGrid.Children.Add(stigmaHeader);
   var daevHeader=Text(T("Daevanion Points (up to 10)"),12,false,"#BAB2CC");Grid.SetColumn(daevHeader,2);shopGrid.Children.Add(daevHeader);
   AddShopRow(shopGrid,0,"Nightmare Coins","CoinShopNightmareStigma","CoinShopNightmareDaevanion");

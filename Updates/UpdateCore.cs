@@ -19,7 +19,7 @@ public sealed record Trust(string ManifestUrl, string PublicKeyPem)
 }
 // Signature covers the exact UTF-8 payload bytes, avoiding ambiguous JSON canonicalization.
 public sealed record Envelope(string Payload, string Signature);
-public sealed record Manifest(int SchemaVersion, string Version, string ReleaseDate, string DownloadUrl, string Sha256, string ReleaseNotes, string MinimumUpdaterVersion, bool Mandatory);
+public sealed record Manifest(int SchemaVersion, string Version, string ReleaseDate, string DownloadUrl, string Sha256, string ReleaseNotes, string MinimumUpdaterVersion, bool Mandatory, string? Aion2UpdaterUrl = null, string? Aion2UpdaterSha256 = null);
 public sealed record DownloadProgress(long BytesReceived,long? TotalBytes)
 {
  public double? Percentage=>TotalBytes is >0?100.0*BytesReceived/TotalBytes.Value:null;
@@ -27,6 +27,9 @@ public sealed record DownloadProgress(long BytesReceived,long? TotalBytes)
 public static class UpdateCore
 {
  public const string UpdaterVersion="1.0.0";
+ public const string Aion2UpdaterEntry="Aion2.Updater.exe";
+ public const string Aion2UpdaterSubfolder="AION Auto Updater";
+ public const string Aion2UpdaterStamp="Aion2.Updater.hexor-stamp";
  public static readonly string[] OwnedFiles=["Hexor-AION-Control-Center.exe","Hexor.Updater.exe"];
  public static string GateName(string install)=>"Local\\HexorUpdate-"+Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Path.TrimEndingDirectorySeparator(Path.GetFullPath(install)).ToUpperInvariant())));
  public static Version ParseVersion(string value)
@@ -44,6 +47,9 @@ public static class UpdateCore
   if(rsa.KeySize<3072||!rsa.VerifyData(bytes,Convert.FromBase64String(envelope.Signature),HashAlgorithmName.SHA256,RSASignaturePadding.Pss))throw new InvalidDataException("Release signature is invalid.");
   var m=JsonSerializer.Deserialize<Manifest>(bytes)??throw new InvalidDataException("Missing release metadata.");
   if(m.SchemaVersion!=1||!Regex.IsMatch(m.Sha256,@"^[a-fA-F0-9]{64}$")||m.ReleaseNotes.Length>24000||!DateTimeOffset.TryParse(m.ReleaseDate,out _))throw new InvalidDataException("Unsupported or malformed release metadata.");
+  if(m.Aion2UpdaterSha256 is {Length:>0} companion && !Regex.IsMatch(companion,@"^[a-fA-F0-9]{64}$"))throw new InvalidDataException("Unsupported companion updater metadata.");
+  if(!string.IsNullOrEmpty(m.Aion2UpdaterUrl))ValidateReleaseUrl(m.Aion2UpdaterUrl);
+  if((m.Aion2UpdaterUrl is null)!=(string.IsNullOrEmpty(m.Aion2UpdaterSha256)))throw new InvalidDataException("Companion updater metadata is incomplete.");
   ParseVersion(m.Version);if(ParseVersion(m.MinimumUpdaterVersion)>ParseVersion(UpdaterVersion))throw new InvalidDataException("This release requires a newer AIO installer.");ValidateReleaseUrl(m.DownloadUrl);return m;
  }
  public const int MaximumRedirects=5;
@@ -150,6 +156,26 @@ public static class UpdateCore
   if(zip.Entries.Count!=OwnedFiles.Length)throw new InvalidDataException("Package must contain only the two Hexor executables.");
   var seen=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
   foreach(var entry in zip.Entries){if(!OwnedFiles.Contains(entry.FullName,StringComparer.Ordinal)||!seen.Add(entry.FullName)||entry.Length<2||entry.Length>600_000_000||(entry.ExternalAttributes>>16&0xF000)==0xA000)throw new InvalidDataException("Unsafe archive entry.");entry.ExtractToFile(Path.Combine(stage,entry.FullName));using var file=File.OpenRead(Path.Combine(stage,entry.FullName));if(file.ReadByte()!=77||file.ReadByte()!=90)throw new InvalidDataException("Invalid executable.");}
+ }
+ public static string Aion2UpdaterTarget(string installDirectory)
+ {
+  var root=Directory.GetParent(Path.TrimEndingDirectorySeparator(Path.GetFullPath(installDirectory)))?.FullName??throw new InvalidOperationException("Cannot locate the companion updater folder.");
+  return Path.Combine(root,Aion2UpdaterSubfolder,Aion2UpdaterEntry);
+ }
+ // The companion updater is delivered as a separate single-entry archive next to the main release.
+ public static void StageAion2Updater(string package,string stage)
+ {
+  Directory.CreateDirectory(stage);using var zip=ZipFile.OpenRead(package);
+  if(zip.Entries.Count!=1||!string.Equals(zip.Entries[0].FullName,Aion2UpdaterEntry,StringComparison.Ordinal)||zip.Entries[0].Length<2||zip.Entries[0].Length>600_000_000||(zip.Entries[0].ExternalAttributes>>16&0xF000)==0xA000)throw new InvalidDataException("Companion updater package is malformed.");
+  zip.Entries[0].ExtractToFile(Path.Combine(stage,Aion2UpdaterEntry),true);
+  using var file=File.OpenRead(Path.Combine(stage,Aion2UpdaterEntry));if(file.ReadByte()!=77||file.ReadByte()!=90)throw new InvalidDataException("Invalid executable.");
+ }
+ public static void InstallAion2Updater(string target,string staged)
+ {
+  var directory=Path.GetDirectoryName(target)!;Directory.CreateDirectory(directory);
+  var temporary=Path.Combine(directory,Guid.NewGuid().ToString("N")+".new");File.Copy(staged,temporary,true);
+  try{if(File.Exists(target))File.Replace(temporary,target,null);else File.Move(temporary,target);}
+  finally{if(File.Exists(temporary))File.Delete(temporary);}
  }
  public static void NoLinks(string path)
  {

@@ -29,6 +29,24 @@ try{
  Reject(()=>UpdateCore.Verify(Sign(m with{MinimumUpdaterVersion="9.0.0"}),rsa.ExportSubjectPublicKeyInfoPem()),"incompatible helper");
  Check(UpdateCore.ParseVersion("1.10.0")>UpdateCore.ParseVersion("1.9.9"),"semantic numeric version comparison");Reject(()=>UpdateCore.ParseVersion("1.01.0"),"malformed version");
  UpdateCore.VerifyPackage(package,m);Check(true,"valid checksum");Reject(()=>UpdateCore.VerifyPackage(package,m with{Sha256=new string('0',64)}),"invalid checksum");Reject(()=>UpdateCore.VerifyPackage(package+"missing",m),"missing package");
+ // Companion (rebranded Aion2.Updater.exe) delivery: manifest fields, staging and installation.
+ var companionZip=Path.Combine(root,"companion.zip");using(var cz=ZipFile.Open(companionZip,ZipArchiveMode.Create)){using var writer=new StreamWriter(cz.CreateEntry(UpdateCore.Aion2UpdaterEntry).Open());writer.Write("MZrebranded updater");}
+static void WriteCompanion(string zipPath,string content){using var zip=ZipFile.Open(zipPath,ZipArchiveMode.Update);var entry=zip.GetEntry(UpdateCore.Aion2UpdaterEntry)!;entry.Delete();using var writer=new StreamWriter(zip.CreateEntry(UpdateCore.Aion2UpdaterEntry).Open());writer.Write(content);}
+ var companionHash=Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(companionZip)));
+ var cm=m with{Aion2UpdaterUrl="https://github.com/hexor-test-fixture/hexor-updates/releases/download/v1.2.3/companion.zip",Aion2UpdaterSha256=companionHash};
+ Check(UpdateCore.Verify(Sign(cm),rsa.ExportSubjectPublicKeyInfoPem())==cm,"manifest with companion updater fields verifies");
+ Reject(()=>UpdateCore.Verify(Sign(cm with{Aion2UpdaterUrl="http://example.com"}),rsa.ExportSubjectPublicKeyInfoPem()),"companion HTTP URL rejected");
+ Reject(()=>UpdateCore.Verify(Sign(cm with{Aion2UpdaterSha256="nothex"}),rsa.ExportSubjectPublicKeyInfoPem()),"companion malformed checksum rejected");
+ Reject(()=>UpdateCore.Verify(Sign(m with{Aion2UpdaterUrl=cm.Aion2UpdaterUrl}),rsa.ExportSubjectPublicKeyInfoPem()),"companion URL without checksum rejected");
+ Check(!Aion2UpdaterSync.IsAdvertised(m)&&Aion2UpdaterSync.IsAdvertised(cm),"companion advertisement detection");
+ var cstage=Path.Combine(root,"companion-stage");UpdateCore.StageAion2Updater(companionZip,cstage);Check(true,"companion package staged");
+ Reject(()=>{var extra=Path.Combine(root,"extra.zip");using(var ez=ZipFile.Open(extra,ZipArchiveMode.Create)){ez.CreateEntry(UpdateCore.Aion2UpdaterEntry);ez.CreateEntry("Hexor.Updater.exe");}UpdateCore.StageAion2Updater(extra,Path.Combine(root,"extra-stage"));},"companion package with extra entries rejected");
+ Reject(()=>{var wrong=Path.Combine(root,"wrong.zip");using(var wz=ZipFile.Open(wrong,ZipArchiveMode.Create)){wz.CreateEntry("Other.exe");}UpdateCore.StageAion2Updater(wrong,Path.Combine(root,"wrong-stage"));},"companion package with unexpected entry name rejected");
+ var vendorRoot=Path.Combine(root,"vendor","app");var vendorTarget=Path.Combine(root,"vendor","AION Auto Updater",UpdateCore.Aion2UpdaterEntry);
+ var target=UpdateCore.Aion2UpdaterTarget(vendorRoot);Check(target==vendorTarget,"companion target sits beside the console install, in the vendor updater folder");
+ UpdateCore.InstallAion2Updater(target,Path.Combine(cstage,UpdateCore.Aion2UpdaterEntry));Check(File.ReadAllText(target)=="MZrebranded updater","companion updater installed on fresh machine");
+ WriteCompanion(companionZip,"MZrebranded updater v2");
+ UpdateCore.StageAion2Updater(companionZip,cstage);UpdateCore.InstallAion2Updater(target,Path.Combine(cstage,UpdateCore.Aion2UpdaterEntry));Check(File.ReadAllText(target)=="MZrebranded updater v2","companion updater replaced atomically");
  var bad=Path.Combine(root,"bad.zip");using(var z=ZipFile.Open(bad,ZipArchiveMode.Create)){z.CreateEntry("../victim.exe");z.CreateEntry("Hexor.Updater.exe");}Reject(()=>UpdateCore.Stage(bad,Path.Combine(root,"badstage")),"archive traversal");
  var install=Path.Combine(root,"installed");Directory.CreateDirectory(install);foreach(var name in UpdateCore.OwnedFiles)File.WriteAllText(Path.Combine(install,name),"MZold release");File.WriteAllText(Path.Combine(install,"customer.json"),"customer settings");File.WriteAllText(Path.Combine(install,"Aion2.Updater.exe"),"unrelated");
  var stage=Path.Combine(root,"stage");UpdateCore.Stage(package,stage);

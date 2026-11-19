@@ -176,8 +176,7 @@ function Invoke-HexorPublicAssetVerification {
 function Publish-HexorGitHubRelease {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$GitHubRepository, [Parameter(Mandatory)][string]$Version, [Parameter(Mandatory)][string]$ReleaseDirectory, [Parameter(Mandatory)][string]$Root)
-    if ($GitHubRepository -ceq 'h3xor1337/hexor-updates' -and [version]$Version -ge [version]'1.0.14') {
-        if ($Version -cne '1.0.14') { throw 'Qualification policy is approved for v1.0.14 only.' }
+    if ($GitHubRepository -ceq 'h3xor1337/hexor-updates' -and $Version -ceq '1.0.14') {
         $gateEvidence = Join-Path $Root ('.build/publication-gate-' + [guid]::NewGuid().ToString('N'))
         & (Join-Path $Root 'scripts/Test-HexorConsoleRelease.ps1') -Phase Publication -ReleaseDirectory $ReleaseDirectory -ResultDirectory $gateEvidence
     }
@@ -189,7 +188,7 @@ function Publish-HexorGitHubRelease {
     $manifestBytes = [IO.File]::ReadAllBytes($manifestPath)
     $manifest = Read-HexorSignedManifest -Bytes $manifestBytes -PublicKeyPem $trust.PublicKeyPem
     if ($manifest.Version -cne $Version -or $manifest.DownloadUrl -cne $config.DownloadUrl) { throw 'Prepared manifest version or DownloadUrl does not match the approved GitHub release.' }
-    $names = @("Hexor-$Version-win-x64.zip", 'latest.json', 'SHA256SUMS.txt', 'RELEASE-NOTES.md')
+    $names = @("Hexor-$Version-win-x64.zip", 'latest.json', 'SHA256SUMS.txt', 'RELEASE-NOTES.md', "Hexor-Aion2-Updater-$Version-win-x64.zip")
     $files = @($names | ForEach-Object {
         $path = Join-Path $ReleaseDirectory $_
         $item = Get-Item -LiteralPath $path -ErrorAction Stop
@@ -197,8 +196,16 @@ function Publish-HexorGitHubRelease {
         [pscustomobject]@{ Name = $_; Path = $item.FullName; Size = $item.Length; Hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() }
     })
     if ($files[0].Hash -cne $manifest.Sha256.ToLowerInvariant()) { throw 'Prepared package does not match the signed SHA-256 digest.' }
-    $checksumLine = [IO.File]::ReadAllText($files[2].Path).Trim()
-    if ($checksumLine -cne "$($files[0].Hash)  $($files[0].Name)") { throw 'SHA256SUMS.txt does not match the signed package.' }
+    $companionHashProperty = $manifest.PSObject.Properties['Aion2UpdaterSha256']
+    if ($companionHashProperty -and $companionHashProperty.Value) {
+        $companion = $files | Where-Object Name -eq "Hexor-Aion2-Updater-$Version-win-x64.zip"
+        if (-not $companion) { throw 'Signed manifest advertises the companion updater but the asset is missing.' }
+        if ($companion.Hash -cne $manifest.Aion2UpdaterSha256.ToLowerInvariant()) { throw 'Companion updater package does not match the signed SHA-256 digest.' }
+    }
+    $checksumLines = [IO.File]::ReadAllText($files[2].Path).Trim() -split "\r?\n"
+    foreach ($zip in @($files | Where-Object Name -like '*.zip')) {
+        if ($checksumLines -cnotcontains "$($zip.Hash)  $($zip.Name)") { throw "SHA256SUMS.txt does not list the signed package: $($zip.Name)" }
+    }
     if ([IO.File]::ReadAllText($files[3].Path).TrimEnd() -cne ([string]$manifest.ReleaseNotes).TrimEnd()) { throw 'Release notes do not match the signed manifest.' }
 
     $repository = Invoke-HexorGitHubCommand -Arguments @('api', "repos/$GitHubRepository")

@@ -5,7 +5,7 @@ using System.Text.Json;
 
 namespace Hexor.Updates;
 
-internal enum OtaCheckStage { TrustConfiguration, ManifestFetch, ManifestRead, ManifestValidation, ManifestCleanup, Presentation }
+internal enum OtaCheckStage { TrustConfiguration, ManifestFetch, ManifestRead, ManifestValidation, ManifestCleanup, Presentation, CompanionSync }
 
 internal static class OtaCheckDiagnostics
 {
@@ -23,6 +23,7 @@ internal static class OtaCheckDiagnostics
             OtaCheckStage.ManifestValidation => "manifest-validation",
             OtaCheckStage.ManifestCleanup => "manifest-cleanup",
             OtaCheckStage.Presentation => "presentation",
+            OtaCheckStage.CompanionSync => "companion-sync",
             _ => "unknown"
         };
         var (type, category) = error switch
