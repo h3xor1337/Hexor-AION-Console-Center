@@ -280,7 +280,7 @@ internal static class RuntimeDisplayTests
         check(All<ComboBox>(window).Select(c=>c.Name).SequenceEqual(new[]{"CharacterRaceSelector","CharacterJobSelector"}),"Auto Task exposes the verified character-default selectors");
 
         Navigate(window,1,"Resource Grab",pump:false);
-        check(All<CheckBox>(window).Select(c=>c.DataContext).OfType<RegistryToggle>().Where(t=>t.Section=="ResourceGrab").Select(t=>t.Name).SequenceEqual(new[]{"AutoEnterAbyss","AbyssCounterAttack","GatherQualityFilterEnabled","GatherIgnoreAether","GuardianLogoutAvoidance","AuctionAutoSell"}),"Resource Grab exposes each verified Boolean exactly once");
+        check(All<CheckBox>(window).Select(c=>c.DataContext).OfType<RegistryToggle>().Where(t=>t.Section=="ResourceGrab").Select(t=>t.Name).SequenceEqual(new[]{"AutoEnterAbyss","AbyssCounterAttack","GatherQualityFilterEnabled","GatherIgnoreAether","AuctionAutoSell"}),"Resource Grab exposes each verified Boolean exactly once");
         foreach(var name in new[]{"GatherQualityFilterEnabled","GatherIgnoreAether"})
         {
             var toggle=All<CheckBox>(window).Single(c=>c.DataContext is RegistryToggle t&&t.Name==name);
@@ -309,7 +309,7 @@ internal static class RuntimeDisplayTests
         check(gatheringScroll.ExtentWidth<=gatheringScroll.ViewportWidth+1&&gatheringScroll.ScrollableHeight>0,"Long English resource names wrap without horizontal overflow and all resources remain reachable");
         CaptureFeature(window,"gathering-resources");
         check(All<CheckBox>(window).Select(c=>c.DataContext).OfType<RegistryToggle>().Any(t=>t.Name=="AbyssCounterAttack"&&t.Label=="Attack Nearby Players")
-            && All<CheckBox>(window).Select(c=>c.DataContext).OfType<RegistryToggle>().Any(t=>t.Name=="GuardianLogoutAvoidance"&&t.Label=="Avoid Captcha System by Logging out/in"),"Resource toggle labels match the release wording exactly");
+            && All<CheckBox>(window).Select(c=>c.DataContext).OfType<RegistryToggle>().All(t=>t.Name!="GuardianLogoutAvoidance"),"Resource toggle labels match the release wording and the retired toggle is gone");
         check(!All<Button>(window).Any(b=>b.Content is "Show Updater")
             && All<Button>(window).Any(b=>b.Content is "Open AION Updater"),"Only Open AION Updater remains available; Show Updater is removed");
         TestCheckpoint.Write("WPF: enhancement fixture cap save");vm.UpgradeMaxBattlePowerK="100";vm.SaveUpgradeMaxBattlePowerK();vm.Status="Ready. Choose a setting to get started.";Navigate(window,4,"enhancement",pump:false);

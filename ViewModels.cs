@@ -818,7 +818,6 @@ public sealed class MainViewModel : Observable, IDisposable
         AddToggle("MiniGame", "UseTaiwanVillageRules", "Stay AFK in Shugo Festival", false);
         AddToggle("ResourceGrab", "AutoEnterAbyss", "Automatically enter Abyss", null);
         AddToggle("ResourceGrab", "AbyssCounterAttack", "Attack Nearby Players", null);
-        AddToggle("ResourceGrab", "GuardianLogoutAvoidance", "Avoid Captcha System by Logging out/in", null);
         AddToggle("ResourceGrab", "AuctionAutoSell", "Automatically sell at auction", null);
         foreach (var feature in LegionCommanderFeatureSettings.Booleans)
             AddToggle(feature.Section, feature.Name, feature.Label, false);
@@ -1240,8 +1239,7 @@ public sealed class MainViewModel : Observable, IDisposable
         captchaDiagnostics = string.Join(Environment.NewLine,
             snapshot.Detail,
             "Signals: " + snapshot.SourcesDescription,
-            "Hexor never reads challenge images or answers, never touches the provider's private automation channels, and cannot resolve the challenge for you.",
-            "GuardianLogoutAvoidance is the provider's separate logout/relogin avoidance setting; it works outside Abyss only and is not CAPTCHA solving.");
+            "Hexor never reads challenge images or answers, never touches the provider's private automation channels, and cannot resolve the challenge for you.");
         Changed(nameof(CaptchaStatusText)); Changed(nameof(CaptchaDiagnostics));
     }
     private static string CaptchaTile(CaptchaSnapshot snapshot) => snapshot.Phase switch

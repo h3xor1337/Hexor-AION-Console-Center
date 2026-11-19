@@ -32,6 +32,14 @@ internal static class RegistryInitializationTests
             "Missing auction settings default to OFF and Average");
         check(registry.Read("Enhance", "DestroyInsteadOfExtract") == 0, "Fresh customer installation creates Equipment Extraction as DWORD OFF");
         check(registry.ReadAppliedSchemaVersion() == LegionCommanderRegistrySchema.Version, "Successful startup records the embedded schema version in Hexor-owned metadata");
+
+        // Retired-feature push: a value a customer previously enabled is deleted on startup.
+        using (var key = Registry.CurrentUser.CreateSubKey(branch + "\\ResourceGrab", writable: true)) key.SetValue("GuardianLogoutAvoidance", 1, RegistryValueKind.DWord);
+        check(registry.Inspect("ResourceGrab", "GuardianLogoutAvoidance").Value == 1, "Retired setting is present before the removal pass");
+        result = service.Ensure();
+        check(result.Success, "Startup succeeds after removing a retired setting");
+        check(!registry.Inspect("ResourceGrab", "GuardianLogoutAvoidance").Exists, "Retired Guardian logout-avoidance value is deleted from the registry on startup");
+        check(result.RetiredValuesRemoved >= 1, "The removal pass reports the retired values it deleted");
         check(!registry.Inspect("AutoTask", "CharacterRace").Exists && !registry.Inspect("AutoTask", "CharacterJob").Exists && !registry.Inspect("AutoTask", "AutoDailyQuests").Exists,
             "Character identity and unverified daily-task state are never initialized");
         check(Process.GetProcessesByName("LegionCommander").All(p => beforeProcesses.Contains(p.Id)), "Registry initialization does not launch LegionCommander");
@@ -187,7 +195,7 @@ internal static class RegistryInitializationTests
 
         var denied = new RegistryInitializationService(new DeniedRegistry());
         result = denied.Ensure();
-        check(!result.Success && result.Issues.Count == RegistryDefaults.Template.Count, "Registry access-denied failures are reported without claiming success");
+        check(!result.Success && result.Issues.Count == RegistryDefaults.Template.Count + LegionCommanderRegistrySchema.RetiredValues.Count, "Registry access-denied failures are reported without claiming success");
 
         Reset();
         using (var vm = new MainViewModel(new JsonConfigurationService(Path.Combine(temporaryRoot, "initializer-preferences.json"), new SettingsBackupService()), new RegistrySettingsService(branch)))

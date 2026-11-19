@@ -17,8 +17,9 @@ public sealed record RegistrySynchronizationResult(int SettingsChecked, int Miss
     int SchemaVersion, IReadOnlyList<string> Issues)
 {
     public int StartupDefaultsRestored { get; init; }
+    public int RetiredValuesRemoved { get; init; }
     public bool Success => ErrorsEncountered == 0;
-    public string Message => $"Legion Commander settings synchronized. Checked: {SettingsChecked}; initialized: {MissingSettingsInitialized}; startup defaults restored: {StartupDefaultsRestored}; preserved: {ExistingSettingsPreserved}; invalid: {InvalidValuesDetected}; errors: {ErrorsEncountered}.";
+    public string Message => $"Legion Commander settings synchronized. Checked: {SettingsChecked}; initialized: {MissingSettingsInitialized}; startup defaults restored: {StartupDefaultsRestored}; retired removed: {RetiredValuesRemoved}; preserved: {ExistingSettingsPreserved}; invalid: {InvalidValuesDetected}; errors: {ErrorsEncountered}.";
 }
 
 // Reference exports establish names and types only; every newly introduced Boolean initializes OFF.
@@ -45,11 +46,14 @@ public static class LegionCommanderRegistrySchema
         Bool("ResourceGrab", "AutoEnterAbyss", "Resource Gathering / Enter Abyss"),
         Number("ResourceGrab", "AbyssLayer", 21, 21, 23, "Resource Gathering / Abyss layer"),
         Bool("ResourceGrab", "AbyssCounterAttack", "Resource Gathering / Counterattack"),
-        Bool("ResourceGrab", "GuardianLogoutAvoidance", "Resource Gathering / Guardian logout avoidance"),
         Bool("ResourceGrab", "AuctionAutoSell", "Auto Auction / Auto sell") with { ResetOnStartup = true },
         Number("ResourceGrab", "AuctionPriceMode", 1, 0, 1, "Auto Auction / Price mode") with { ResetOnStartup = true },
         Number("ResourceGrab", "AutoDungeonMode", 0, 0, 1, "Auto Dungeon / Dungeon mode")
     });
+    // Removed features: values are deleted from every installation on startup and the shared
+    // game documents are rebuilt without them, so the running game no longer applies them.
+    public static readonly IReadOnlyList<(string Section, string Name)> RetiredValues = new[] { ("ResourceGrab", "GuardianLogoutAvoidance") };
+    public static IReadOnlyList<string> RetiredGroups => new[] { "abyss" };
     private static RegistryDefinition Bool(string section, string name, string binding, int value = 0) => new(section, name, RegistrySettingType.BooleanDWord, value, 0, 1, binding, Version, RegistryOwnership.HexorSupported);
     private static RegistryDefinition Number(string section, string name, int value, int minimum, int maximum, string binding) => new(section, name, RegistrySettingType.IntegerDWord, value, minimum, maximum, binding, Version, RegistryOwnership.HexorSupported);
     public static RegistryDefinition? Find(string section, string name) => Definitions.FirstOrDefault(x => x.Section == section && x.Name == name);
@@ -67,11 +71,28 @@ public sealed class RegistryInitializationService(IRegistrySettingsService regis
     private const string MutexName = "Local\\Hexor.LegionCommander.RegistrySynchronization";
     public bool HasMissingValues() => RegistryDefaults.Template.Any(t => !registry.Inspect(t.Section, t.Name).Exists);
 
+    // The running game reads its behavior from the shared documents; rebuilding the affected
+    // groups without retired keys is what actually disables the removed feature in-game.
+    private void RebuildRetiredSharedGroups(IRegistrySettingsService registry)
+    {
+        var liveRoot = registry.RegistryRoot == @"Software\LegionCommander";
+        if (!liveRoot && Hexor.Compatibility.LegionSharedSettings.SharedDirectoryOverride is null) return; // disposable test branches never touch the live store
+        foreach (var group in LegionCommanderRegistrySchema.RetiredGroups)
+        {
+            try
+            {
+                if (Hexor.Compatibility.LegionSharedSettings.SyncGroup(Hexor.Compatibility.LegionSharedSettings.ResolveSharedDirectory(), group, registry.RegistryRoot)) Diagnostics.Log("registry-synchronization", "retired-shared-group-rebuilt; group=" + group);
+                else Diagnostics.Log("registry-synchronization", "retired-shared-group-rebuild-failed; group=" + group, DiagnosticSeverity.Warning);
+            }
+            catch (Exception e) { Diagnostics.Log("registry-synchronization", "retired-shared-group-rebuild-failure; group=" + group + "; type=" + e.GetType().Name, DiagnosticSeverity.Warning); }
+        }
+    }
+
     public RegistrySynchronizationResult Ensure()
     {
         var appVersion = Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "unknown";
         Diagnostics.Log("registry-synchronization", $"started; application-version={appVersion}; schema-version={LegionCommanderRegistrySchema.Version}");
-        var issues = new List<string>(); var created = 0; var preserved = 0; var invalid = 0; var errors = 0; var previousVersion = 0; var restored = 0;
+        var issues = new List<string>(); var created = 0; var preserved = 0; var invalid = 0; var errors = 0; var previousVersion = 0; var restored = 0; var retiredRemoved = 0;
         using var mutex = new Mutex(false, MutexName); var acquired = false;
         try
         {
@@ -109,6 +130,19 @@ public sealed class RegistryInitializationService(IRegistrySettingsService regis
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException or InvalidOperationException or NotSupportedException)
                 { errors++; issues.Add(label + ": synchronization failed (" + e.GetType().Name + ")."); Diagnostics.Log("registry-synchronization", "failure; setting=" + label + "; type=" + e.GetType().Name, DiagnosticSeverity.Error); }
             }
+            foreach (var retired in LegionCommanderRegistrySchema.RetiredValues)
+            {
+                var label = retired.Section + "." + retired.Name + " (retired)";
+                try
+                {
+                    if (!registry.DeleteRetired(retired.Section, retired.Name)) continue; // value already absent; removal is complete
+                    Diagnostics.Log("registry-synchronization", "retired-value-removed; setting=" + label);
+                    retiredRemoved++;
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException or InvalidOperationException or NotSupportedException)
+                { errors++; issues.Add(label + ": removal failed (" + e.GetType().Name + ")."); Diagnostics.Log("registry-synchronization", "retired-removal-failure; setting=" + label + "; type=" + e.GetType().Name, DiagnosticSeverity.Error); }
+            }
+            RebuildRetiredSharedGroups(registry);
             if (errors == 0)
             {
                 try { registry.WriteAppliedSchemaVersion(LegionCommanderRegistrySchema.Version); }
@@ -122,6 +156,6 @@ public sealed class RegistryInitializationService(IRegistrySettingsService regis
             if (acquired) mutex.ReleaseMutex();
             Diagnostics.Log("registry-synchronization", $"completed; checked={RegistryDefaults.Template.Count}; created={created}; restored={restored}; preserved={preserved}; invalid={invalid}; errors={errors}; migration={previousVersion}->{LegionCommanderRegistrySchema.Version}", errors > 0 ? DiagnosticSeverity.Error : DiagnosticSeverity.Information);
         }
-        RegistrySynchronizationResult Result() => new(RegistryDefaults.Template.Count, created, preserved, invalid, errors, previousVersion, LegionCommanderRegistrySchema.Version, issues) { StartupDefaultsRestored = restored };
+        RegistrySynchronizationResult Result() => new(RegistryDefaults.Template.Count, created, preserved, invalid, errors, previousVersion, LegionCommanderRegistrySchema.Version, issues) { StartupDefaultsRestored = restored, RetiredValuesRemoved = retiredRemoved };
     }
 }

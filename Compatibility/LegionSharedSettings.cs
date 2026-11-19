@@ -42,7 +42,6 @@ public static class LegionSharedSettings
         new SharedSettingMapping("abyss", "autoEnter", "ResourceGrab", "AutoEnterAbyss", SharedSettingKind.Boolean),
         new SharedSettingMapping("abyss", "layer", "ResourceGrab", "AbyssLayer", SharedSettingKind.Integer),
         new SharedSettingMapping("abyss", "counterAttack", "ResourceGrab", "AbyssCounterAttack", SharedSettingKind.Boolean),
-        new SharedSettingMapping("abyss", "guardianLogoutAvoidance", "ResourceGrab", "GuardianLogoutAvoidance", SharedSettingKind.Boolean),
         new SharedSettingMapping("auction", "autoSell", "ResourceGrab", "AuctionAutoSell", SharedSettingKind.Boolean),
         new SharedSettingMapping("auction", "priceMode", "ResourceGrab", "AuctionPriceMode", SharedSettingKind.Integer),
         new SharedSettingMapping("gather", "qualityFilterEnabled", "ResourceGrab", "GatherQualityFilterEnabled", SharedSettingKind.Boolean),
@@ -67,6 +66,14 @@ public static class LegionSharedSettings
         new SharedSettingMapping("shop", "coinShopFestivalStigma", "Enhance", "CoinShopFestivalStigma", SharedSettingKind.Boolean),
         new SharedSettingMapping("shop", "coinShopAbyssStigma", "Enhance", "CoinShopAbyssStigma", SharedSettingKind.Boolean),
     });
+
+    // Keys removed from Hexor entirely: rebuilding a group document deletes them from the
+    // merged values so the running game stops applying the removed feature.
+    public static IReadOnlyDictionary<string, IReadOnlyList<string>> RetiredGroupKeys { get; } =
+        new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["abyss"] = new[] { "guardianLogoutAvoidance" },
+        };
 
     // Test seam: fixture tests point this at a temp root instead of the real machine layout.
     public static string? SharedDirectoryOverride { get; set; }
@@ -166,6 +173,8 @@ public static class LegionSharedSettings
             if (node is null) continue;
             merged[key] = node.DeepClone();
         }
+        if (RetiredGroupKeys.TryGetValue(group, out var retiredKeys))
+            foreach (var retiredKey in retiredKeys) { merged.Remove(retiredKey); mirror.Remove(retiredKey); }
         existing["values"] = merged;
         existing["registryMirror"] = mirror.DeepClone();
 

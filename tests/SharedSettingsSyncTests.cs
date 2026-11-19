@@ -49,6 +49,23 @@ internal static class SharedSettingsSyncTests
             check(mirror["coinShopFestivalDaevanion"]!.GetValue<bool>() == true, "registryMirror matches values after sync");
             check(shopValues.Count == 7 && mirror.Count == 7, "shop.json contains exactly the seven shop-group registry keys");
 
+            // Retired-feature purge: a document that still carries a removed key loses it on rebuild.
+            var abyssPath = Path.Combine(shared, "abyss.json");
+            using (var key = Registry.CurrentUser.CreateSubKey(branch + "\\ResourceGrab"))
+            {
+                key.SetValue("AutoEnterAbyss", 0, RegistryValueKind.DWord);
+                key.SetValue("AbyssLayer", 21, RegistryValueKind.DWord);
+                key.SetValue("AbyssCounterAttack", 0, RegistryValueKind.DWord);
+            }
+            Directory.CreateDirectory(shared);
+            File.WriteAllText(abyssPath, "{\"schema\":1,\"updatedBy\":\"commander\",\"values\":{\"autoEnter\":true,\"layer\":23,\"counterAttack\":false,\"guardianLogoutAvoidance\":true},\"registryMirror\":{\"guardianLogoutAvoidance\":true}}");
+            check(LegionSharedSettings.SyncGroup(shared, "abyss", branch), "abyss group rebuild succeeds over a stale document");
+            var abyss = JsonNode.Parse(File.ReadAllText(abyssPath))!.AsObject();
+            var abyssValues = abyss["values"]!.AsObject();
+            check(abyssValues["guardianLogoutAvoidance"] == null && abyss["registryMirror"]!.AsObject()["guardianLogoutAvoidance"] == null,
+                "Rebuilding the abyss document deletes the retired guardian logout-avoidance key");
+            check(abyssValues["layer"]!.GetValue<int>() == 21, "Retired-key purge preserves the live abyss values");
+
             // A second group sync: dungeon documents rebuild from the registry string + DWORDs.
             using (var key = Registry.CurrentUser.CreateSubKey(branch + "\\ResourceGrab"))
             {

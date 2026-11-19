@@ -112,6 +112,8 @@ public interface IRegistrySettingsService
  void MirrorAutoTaskNumber(string name,int value) => throw new NotSupportedException("Numeric mirror is unavailable.");
  bool CreateMissingDefault(string section,string name,int value) => throw new NotSupportedException("Initialization is unavailable.");
  bool RestoreStartupDefault(string section,string name) => throw new NotSupportedException("Startup defaults are unavailable.");
+ string RegistryRoot => "";
+ bool DeleteRetired(string section,string name) => throw new NotSupportedException("Retired value removal is unavailable.");
  int ReadAppliedSchemaVersion() => 0;
  void WriteAppliedSchemaVersion(int version) { }
  GatheringRegistrySnapshot ReadGathering() => new(new(null,false,false),new(null,false,false));
@@ -124,8 +126,27 @@ public interface IRegistrySettingsService
 }
 public sealed partial class RegistrySettingsService(string root="Software\\LegionCommander", Action<string>? auditSink=null, string? schemaStateRoot=null) : IRegistrySettingsService
 {
+ public string RegistryRoot => root;
+ // Removed-feature cleanup: deletes a retired value and verifies it is gone. Reports "changed"
+ // only when a value was actually deleted, so idempotent startup runs perform no write attempts.
+ public bool DeleteRetired(string section,string name)
+ {
+  if(!Inspect(section,name).Exists) return false; // nothing to remove; no write attempt is audited
+  return StorageAudit.Run(StorageTarget.Registry,[section+"."+name],()=>
+ {
+  using var hive=RegistryKey.OpenBaseKey(RegistryHive.CurrentUser,RegistryView.Registry64);
+  using var key=hive.OpenSubKey(root+"\\"+section,true);
+  var removed=false;
+  if(key!=null&&Array.Exists(key.GetValueNames(),v=>string.Equals(v,name,StringComparison.OrdinalIgnoreCase)))
+  {
+   key.DeleteValue(name,false);removed=true;
+   if(Inspect(section,name).Exists)throw new IOException("Retired value removal verification failed.");
+  }
+  return removed;
+ },changed=>changed,auditSink);
+ }
  private readonly string schemaStateRoot = schemaStateRoot ?? (root == "Software\\LegionCommander" ? "Software\\Hexor\\ControlCenter" : root + "\\_HexorSchema");
- private static readonly Dictionary<string,string[]> Allowed=new(){["AutoTask"]=["CharacterRace","CharacterJob","ClearSideQuestsBeforeDungeon","ExploreCavesBeforeDungeon","SwitchToGatherAfterTasks","AutoDailyQuests"],["Enhance"]=["AutoEnchantMaxPower","AutoBuyOdEnergy","AutoBuyReviveStone","AutoDungeonQuickJoinEnabled","AutoDailyWaveEnabled","AutoNightmareEnabled","AutoAwakenEnabled","AutoOdMorphEnabled","AutoUpgradeMaxBattlePowerK","DestroyInsteadOfExtract"],["MiniGame"]=["AutoEnter","UseTaiwanVillageRules"],["ResourceGrab"]=["AutoDungeonMode","AutoDungeonPriority"]};
+ private static readonly Dictionary<string,string[]> Allowed=new(){["AutoTask"]=["CharacterRace","CharacterJob","ClearSideQuestsBeforeDungeon","ExploreCavesBeforeDungeon","SwitchToGatherAfterTasks","AutoDailyQuests"],["Enhance"]=["AutoEnchantMaxPower","AutoBuyOdEnergy","AutoBuyReviveStone","AutoDungeonQuickJoinEnabled","AutoDailyWaveEnabled","AutoNightmareEnabled","AutoAwakenEnabled","AutoOdMorphEnabled","AutoUpgradeMaxBattlePowerK","DestroyInsteadOfExtract"],["MiniGame"]=["AutoEnter","UseTaiwanVillageRules"],["ResourceGrab"]=["AutoDungeonMode","AutoDungeonPriority","GuardianLogoutAvoidance"]};
  private static void Check(string section,string name){if(LegionCommanderRegistrySchema.Find(section,name)==null&&!LegionCommanderFeatureSettings.IsDWord(section,name)&&(!Allowed.TryGetValue(section,out var names)||!names.Contains(name)))throw new InvalidOperationException("Unverified registry setting.");}
  public bool RestoreStartupDefault(string section,string name)=>StorageAudit.Run(StorageTarget.Registry,[section+"."+name],()=>
  {

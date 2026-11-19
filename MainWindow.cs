@@ -214,12 +214,15 @@ public sealed class MainWindow : Window
    var diagnosticSupport=Section(root,"Diagnostics","Local support logs contain operational checkpoints only. Review the ZIP before sharing; nothing is uploaded automatically.");
    diagnosticSupport.Children.Add(Text("Active log: hexor.log",12,true,"#DCC8FF"));
    diagnosticSupport.Children.Add(Text($"Current size: {Diagnostics.ActiveLogSize/1024d/1024d:F2} MB",12,false,"#B9ADCA"));
-   diagnosticSupport.Children.Add(Button("Open Log",()=>OpenPath(Diagnostics.ActiveLogPath)));
-   diagnosticSupport.Children.Add(Button("Open Logs Folder",()=>OpenPath(Diagnostics.Root)));
-   diagnosticSupport.Children.Add(Button("Copy Log Path",()=>{Clipboard.SetText(Diagnostics.ActiveLogPath);MessageBox.Show(this,"Log path copied.","Diagnostics",MessageBoxButton.OK,MessageBoxImage.Information);}));
-  diagnosticSupport.Children.Add(Button("Copy Support ID",()=>{Clipboard.SetText(Diagnostics.SessionId);MessageBox.Show(this,"Support ID copied.","Diagnostics",MessageBoxButton.OK,MessageBoxImage.Information);}));
-  diagnosticSupport.Children.Add(Button("Export Support Logs",()=>{var path=Diagnostics.ExportSupportLogs();if(string.IsNullOrEmpty(path)){MessageBox.Show(this,"Support log export could not be created.","Diagnostics",MessageBoxButton.OK,MessageBoxImage.Warning);return;}new SupportLogExportDialog(path){Owner=this}.ShowDialog();}));
-  diagnosticSupport.Children.Add(Button("Open Export Folder",()=>{var path=Diagnostics.LastExportPath;if(!string.IsNullOrEmpty(path))SupportLogExportActions.OpenFolder(path);else System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Diagnostics.Root){UseShellExecute=true});}));
+   var diagnosticButtons=new WrapPanel{Orientation=Orientation.Horizontal,ItemWidth=236,Margin=new Thickness(0,8,0,0)};
+   void DiagnosticButton(string label,Action action){var b=Button(label,action);b.HorizontalAlignment=HorizontalAlignment.Stretch;b.Margin=new Thickness(0,4,8,4);diagnosticButtons.Children.Add(b);}
+   DiagnosticButton("Open Log",()=>OpenPath(Diagnostics.ActiveLogPath));
+   DiagnosticButton("Open Logs Folder",()=>OpenPath(Diagnostics.Root));
+   DiagnosticButton("Copy Log Path",()=>{Clipboard.SetText(Diagnostics.ActiveLogPath);MessageBox.Show(this,"Log path copied.","Diagnostics",MessageBoxButton.OK,MessageBoxImage.Information);});
+   DiagnosticButton("Copy Support ID",()=>{Clipboard.SetText(Diagnostics.SessionId);MessageBox.Show(this,"Support ID copied.","Diagnostics",MessageBoxButton.OK,MessageBoxImage.Information);});
+   DiagnosticButton("Export Support Logs",()=>{var path=Diagnostics.ExportSupportLogs();if(string.IsNullOrEmpty(path)){MessageBox.Show(this,"Support log export could not be created.","Diagnostics",MessageBoxButton.OK,MessageBoxImage.Warning);return;}new SupportLogExportDialog(path){Owner=this}.ShowDialog();});
+   DiagnosticButton("Open Export Folder",()=>{var path=Diagnostics.LastExportPath;if(!string.IsNullOrEmpty(path))SupportLogExportActions.OpenFolder(path);else System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Diagnostics.Root){UseShellExecute=true});});
+   diagnosticSupport.Children.Add(diagnosticButtons);
   var update=Section(root,"UPDATE STATUS");var updateText=Text("",14,true,"#DCC8FF");updateText.SetBinding(TextBlock.TextProperty,"UpdateStatus");update.Children.Add(updateText);update.Children.Add(Text("Run the AION updater again whenever AION2 receives a game update.",12,false,"#B9ADCA"));
   var support=Section(root,"HEXOR SUPPORT & COMMUNITY");support.Children.Add(Text("Discord Server · discord.gg/PsDUVazRT3\nDiscord Username · h3x0r1337",13,false,"#DCC8FF"));support.Children.Add(Button("Join Discord",()=>System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://discord.gg/PsDUVazRT3"){UseShellExecute=true})));support.Children.Add(Button("Copy Username",()=>{Clipboard.SetText("h3x0r1337");MessageBox.Show(this,"Discord username copied.","Hexor Support",MessageBoxButton.OK,MessageBoxImage.Information);}));
 
@@ -397,8 +400,6 @@ public sealed class MainWindow : Window
    """);
   gathering.Children.Add(new ScrollViewer{Name="GatheringResourceScroll",MaxHeight=320,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,Content=targets});
   gathering.Children.Add(Button("Refresh gathering settings",Model.Gathering.Reload));
-
-  RegistryOptions(Section(root,"Guardian Verification"),"ResourceGrab",["GuardianLogoutAvoidance"]);
 
   var auction=Section(root,"Auction","Each Hexor startup resets auto sell to OFF and price mode to Average.");
   RegistryOptions(auction,"ResourceGrab",["AuctionAutoSell"]);
