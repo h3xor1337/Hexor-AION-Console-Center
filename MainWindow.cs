@@ -52,9 +52,9 @@ public sealed class MainWindow : Window
   AutomationProperties.SetHeadingLevel(title, AutomationHeadingLevel.Level1);
   var head=new StackPanel();head.Children.Add(title);head.Margin=new(0,0,0,14);DockPanel.SetDock(head,Dock.Top);main.Children.Add(head);
   var status=new TextBlock{Margin=new(0,8,0,0),TextWrapping=TextWrapping.Wrap,Foreground=Brush("#CDB6F5")};status.SetBinding(TextBlock.TextProperty,"CustomerStatus");DockPanel.SetDock(status,Dock.Bottom);main.Children.Add(status);
-  var monitor=new WrapPanel();foreach(var item in new[]{("GAME","GameStatus"),("CLIENT","Detection.Client"),("SETTINGS","CustomerConfigurationStatus"),("CAPTCHA","CaptchaStatusText"),("VISUAL","VisualMonitorStatusText"),("IN-GAME CONTROLS","Show / Hide Menu · F10")}){var box=new StackPanel{Margin=new(0,0,24,0),MinWidth=130};box.Children.Add(Text(item.Item1,9,false,"#A99ABF"));var value=Text(item.Item2=="Show / Hide Menu · F10"?"F10  ·  Show / Hide Menu":"",13,true,item.Item2=="Show / Hide Menu · F10"?"#DCC8FF":"#F1EFF8");value.MaxWidth=330;if(item.Item1=="CAPTCHA")value.Name="CaptchaStatusTile";if(item.Item2!="Show / Hide Menu · F10")value.SetBinding(TextBlock.TextProperty,item.Item2);monitor.Children.Add(box);box.Children.Add(value);}var monitorCard=Card(monitor);monitorCard.Margin=new(0,0,0,18);DockPanel.SetDock(monitorCard,Dock.Top);main.Children.Add(monitorCard);
+  var monitor=new WrapPanel();foreach(var item in new[]{("GAME","GameStatus"),("CLIENT","Detection.Client"),("SETTINGS","CustomerConfigurationStatus"),("CAPTCHA","CaptchaStatusText"),("IN-GAME CONTROLS","Show / Hide Menu · F10")}){var box=new StackPanel{Margin=new(0,0,24,0),MinWidth=130};box.Children.Add(Text(item.Item1,9,false,"#A99ABF"));var value=Text(item.Item2=="Show / Hide Menu · F10"?"F10  ·  Show / Hide Menu":"",13,true,item.Item2=="Show / Hide Menu · F10"?"#DCC8FF":"#F1EFF8");value.MaxWidth=330;if(item.Item1=="CAPTCHA")value.Name="CaptchaStatusTile";if(item.Item2!="Show / Hide Menu · F10")value.SetBinding(TextBlock.TextProperty,item.Item2);monitor.Children.Add(box);box.Children.Add(value);}var monitorCard=Card(monitor);monitorCard.Margin=new(0,0,0,18);DockPanel.SetDock(monitorCard,Dock.Top);main.Children.Add(monitorCard);
   pageScroll.Content=content;main.Children.Add(pageScroll);
-   BuildNavigation();ShowPage(0);timer.Tick+=async(_,_)=>{await Model.RefreshDetectionAsync();await Model.PollCaptchaAsync();await Model.PollVisualMonitorAsync();};Loaded+=async(_,_)=>{try{await Model.DiscoverAsync();await RefreshMenuStatusAsync();ShowPage(page);await Model.RefreshDetectionAsync();await Model.PollCaptchaAsync();await Model.PollVisualMonitorAsync();await RefreshMenuStatusAsync();if(model==null && Model.NeedsRegistryInitialization())PromptRegistryInitialization();timer.Start();}finally{initialLoadCompletion.TrySetResult();}};Activated+=async(_,_)=>await RefreshMenuStatusAsync();Closed+=(_,_)=>{timer.Stop();menuRefresh?.Cancel();menuRefresh?.Dispose();Model.Dispose();};
+   BuildNavigation();ShowPage(0);timer.Tick+=async(_,_)=>{await Model.RefreshDetectionAsync();await Model.PollCaptchaAsync();};Loaded+=async(_,_)=>{try{await Model.DiscoverAsync();await RefreshMenuStatusAsync();ShowPage(page);await Model.RefreshDetectionAsync();await Model.PollCaptchaAsync();await RefreshMenuStatusAsync();if(model==null && Model.NeedsRegistryInitialization())PromptRegistryInitialization();timer.Start();}finally{initialLoadCompletion.TrySetResult();}};Activated+=async(_,_)=>await RefreshMenuStatusAsync();Closed+=(_,_)=>{timer.Stop();menuRefresh?.Cancel();menuRefresh?.Dispose();Model.Dispose();};
  }
  protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
  {
@@ -454,30 +454,8 @@ public sealed class MainWindow : Window
   var summary=Text("",12,false,"#B9ADCA");summary.Name="CaptchaRecordsSummary";summary.SetBinding(TextBlock.TextProperty,nameof(MainViewModel.CaptchaRecordsSummary));status.Children.Add(summary);
   var records=new ItemsControl{Name="CaptchaRecordList",FontSize=12,Foreground=Brush("#DCC8FF")};records.SetBinding(ItemsControl.ItemsSourceProperty,nameof(MainViewModel.CaptchaRecordLines));status.Children.Add(records);
 
-  var alerts=Section(root,"Alert preferences");
-  Check(alerts,"Show captcha notifications","CaptchaNotifications");
-  Check(alerts,"Pause workflow and schedule applies during an active captcha","CaptchaPauseApplies");
-  alerts.Children.Add(Text("Applies to settings Hexor applies itself; the running automation is not paused by Hexor.",12,false,"#B9ADCA"));
-  Check(alerts,"Require my confirmation before paused applies resume","CaptchaResumeConfirmation");
-  alerts.Children.Add(Text("When enabled, Hexor waits for confirmation after the active signal ends. Check the game before choosing Confirm apply resume.",12,false,"#B9ADCA"));
-  alerts.Children.Add(Button("Confirm apply resume",()=>Model.ConfirmChallengeResume()));
-
-  var visual=Section(root,"Visual template monitor (optional)","A separate, optional layer that watches the game window for challenge overlays. The auto-resolver does not need it — leave this unconfigured unless you want overlay alerts.");
-  Check(visual,"Enable Visual Detection","VisualDetectionEnabled");
-  Check(visual,"Enable Notification Sound","VisualDetectionSound");
-  var sensitivityRow=new Grid{Margin=new Thickness(0,4,0,0)};sensitivityRow.ColumnDefinitions.Add(new());sensitivityRow.ColumnDefinitions.Add(new(){Width=new GridLength(180)});
-  var sensitivityLabel=Text(T("Detection sensitivity"),12,false,"#BAB2CC");sensitivityLabel.VerticalAlignment=VerticalAlignment.Center;sensitivityRow.Children.Add(sensitivityLabel);
-  var sensitivity=new Slider{Name="VisualDetectionSensitivitySlider",Minimum=0,Maximum=100,Width=170,IsSnapToTickEnabled=true,TickFrequency=5,HorizontalAlignment=HorizontalAlignment.Left};
-  AutomationProperties.SetName(sensitivity,T("Detection sensitivity"));
-  sensitivity.SetBinding(Slider.ValueProperty,new Binding("VisualDetectionSensitivity"){Mode=BindingMode.TwoWay,UpdateSourceTrigger=UpdateSourceTrigger.PropertyChanged});
-  Grid.SetColumn(sensitivity,1);sensitivityRow.Children.Add(sensitivity);visual.Children.Add(sensitivityRow);
-  var visualInterval=Input(visual,"Monitoring interval (seconds)","VisualDetectionIntervalText");visualInterval.Name="VisualDetectionIntervalInput";
-  visual.Children.Add(Text("Higher sensitivity lowers the match threshold. Templates are whole-overlay shape references you place in the patterns folder.",12,false,"#B9ADCA"));
-  var templateFolder=Input(visual,"Pattern templates folder","VisualDetectionTemplateFolder");templateFolder.Name="VisualDetectionTemplateFolderInput";
-  visual.Children.Add(Button("Open patterns folder",()=>{var folder=Model.VisualDetectionTemplateFolder;System.IO.Directory.CreateDirectory(folder);OpenPath(folder);}));
-  var visualStatus=Text("",13,true,"#DCC8FF");visualStatus.Name="VisualMonitorStatusText";visualStatus.SetBinding(TextBlock.TextProperty,"VisualMonitorStatusText");AutomationProperties.SetLiveSetting(visualStatus,AutomationLiveSetting.Polite);visual.Children.Add(visualStatus);
-  var visualDetail=Text("",12,false,"#B9ADCA");visualDetail.TextWrapping=TextWrapping.Wrap;visualDetail.SetBinding(TextBlock.TextProperty,"VisualMonitorDetail");visual.Children.Add(visualDetail);
-  visual.Children.Add(Button("View Detection Logs",()=>new VisualDetectionLogDialog(Model){Owner=this}.ShowDialog()));
+  var alerts=Section(root,"Alert preferences","Hexor plays a sound and shows a tile when the game shows a challenge. The auto-resolve answers it automatically — nothing is paused and no confirmation is needed.");
+  Check(alerts,"Alert me when a captcha appears","CaptchaNotifications");
  }
  private void Enhance(StackPanel root)
  {

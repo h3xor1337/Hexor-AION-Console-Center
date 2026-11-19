@@ -49,6 +49,22 @@ internal static class SharedSettingsSyncTests
             check(mirror["coinShopFestivalDaevanion"]!.GetValue<bool>() == true, "registryMirror matches values after sync");
             check(shopValues.Count == 7 && mirror.Count == 7, "shop.json contains exactly the seven shop-group registry keys");
 
+            // Drift watchdog: the game's menu rewrites a group document with stale values; the
+            // reconcile pass re-asserts the registry truth without touching clean documents.
+            var driftPath = Path.Combine(shared, "shop.json");
+            var correctShop = File.ReadAllText(driftPath);
+            File.WriteAllText(driftPath, "{\"schema\":1,\"updatedBy\":\"game\",\"values\":{\"coinShopAbyssStigma\":true},\"registryMirror\":{}}");
+            LegionSharedSettings.ReconcileAllGroups(branch);
+            var reconciled = JsonNode.Parse(File.ReadAllText(driftPath))!["values"]!.AsObject();
+            check(reconciled["coinShopAbyssStigma"]!.GetValue<bool>() == false,
+                "Reconcile corrects a shop document the game rewrote with stale values");
+            check(reconciled["coinShopFestivalStigma"]!.GetValue<bool>() == true,
+                "Reconcile keeps the toggles the customer left on");
+            var reconciledText = File.ReadAllText(driftPath);
+            LegionSharedSettings.ReconcileAllGroups(branch);
+            check(File.ReadAllText(driftPath) == reconciledText,
+                "Reconcile leaves a clean document untouched");
+
             // Retired-feature purge: a document that still carries a removed key loses it on rebuild.
             var abyssPath = Path.Combine(shared, "abyss.json");
             using (var key = Registry.CurrentUser.CreateSubKey(branch + "\\ResourceGrab"))

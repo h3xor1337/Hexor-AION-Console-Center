@@ -196,33 +196,6 @@ internal static class CaptchaMonitorTests
             "The game-closure fixture updates both bindings without displaying the account label");
     }
 
-    // User-confirmed resumption: a cleared challenge keeps Hexor's own applies paused until the
-    // customer confirms. The running automation is never paused, resumed, or controlled by Hexor.
-    private static void ConfirmationResume(Action<bool, string> check, MainViewModel vm, FakeSource source,
-        DateTimeOffset start, LegionConfigurationService service)
-    {
-        vm.CaptchaResumeConfirmation = true;
-        source.Enqueue(new CaptchaSignal(CaptchaSignalKind.ChallengeRequested, start.AddMinutes(20), "test"));
-        vm.PollCaptchaAsync().GetAwaiter().GetResult();
-        vm.MaxAccounts = "4";
-        vm.SaveSchedule();
-        check(vm.Status.StartsWith("CAPTCHA detected", StringComparison.Ordinal) && ScheduleSettings.Read(service.Read()).Accounts == 3,
-            "Confirmed-resume mode keeps the pause while a new challenge signal is active");
-        source.Enqueue(new CaptchaSignal(CaptchaSignalKind.ResolvedConfirmed, start.AddMinutes(21), "test"));
-        vm.PollCaptchaAsync().GetAwaiter().GetResult();
-        check(!vm.CaptchaChallengeActive && vm.ChallengeResumePending,
-            "A resolved challenge in confirmation mode keeps the apply pause pending customer confirmation");
-        vm.SaveSchedule();
-        check(vm.Status.Contains("waiting for your confirmation", StringComparison.Ordinal) && ScheduleSettings.Read(service.Read()).Accounts == 3,
-            "Schedule apply stays paused after the challenge clears until resumption is confirmed");
-        vm.ConfirmChallengeResume();
-        check(!vm.ChallengeResumePending, "Confirming resumption clears the pending flag");
-        vm.SaveSchedule();
-        check(ScheduleSettings.Read(service.Read()).Accounts == 4 && vm.Status.Contains("persisted and verified", StringComparison.Ordinal),
-            "Schedule apply resumes after the customer confirms resumption");
-        vm.CaptchaResumeConfirmation = false;
-        check(!vm.ChallengeResumePending, "Disabling confirmation mode releases any pending resumption");
-    }
 
     private static void PreferencesRoundTrip(string root, Action<bool, string> check)
     {
@@ -230,14 +203,10 @@ internal static class CaptchaMonitorTests
         var json = new JsonConfigurationService(path, new SettingsBackupService());
         var preferences = json.Load();
         check(preferences.CaptchaNotifications, "CAPTCHA notifications default to enabled");
-        check(!preferences.CaptchaPauseApplies, "CAPTCHA pause defaults to disabled");
-        check(!preferences.CaptchaResumeConfirmation, "Apply-resume confirmation defaults to disabled");
         preferences.CaptchaNotifications = false;
-        preferences.CaptchaPauseApplies = true;
-        preferences.CaptchaResumeConfirmation = true;
         json.Save(preferences);
         var reloaded = new JsonConfigurationService(path, new SettingsBackupService()).Load();
-        check(!reloaded.CaptchaNotifications && reloaded.CaptchaPauseApplies && reloaded.CaptchaResumeConfirmation,
+        check(!reloaded.CaptchaNotifications,
             "CAPTCHA preference toggles round-trip through Hexor preferences");
     }
 
@@ -268,21 +237,16 @@ internal static class CaptchaMonitorTests
             vm.PollCaptchaAsync().GetAwaiter().GetResult();
             check(vm.CaptchaChallengeActive && vm.CaptchaStatusText.StartsWith("CAPTCHA detected", StringComparison.Ordinal),
                 "An active challenge is surfaced through the status tile");
-            vm.CaptchaPauseApplies = true;
             vm.MaxAccounts = "3";
             vm.SaveSchedule();
-            check(vm.Status.StartsWith("CAPTCHA detected", StringComparison.Ordinal) && ScheduleSettings.Read(service.Read()).Accounts == 2,
-                "Pause preference holds schedule apply while a challenge signal is active");
+            check(ScheduleSettings.Read(service.Read()).Accounts == 3,
+                "Applies are never paused by challenge signals (status: " + vm.Status + ")");
             vm.SaveDaily();
-            check(vm.Status.StartsWith("CAPTCHA detected", StringComparison.Ordinal),
-                "Pause preference holds workflow apply while a challenge signal is active");
+            check(!vm.Status.StartsWith("CAPTCHA detected", StringComparison.Ordinal),
+                "Workflow apply is not paused while a challenge signal is active");
             now = start.AddMinutes(16);
             vm.PollCaptchaAsync().GetAwaiter().GetResult();
             check(!vm.CaptchaChallengeActive, "Challenge activity expiry clears the active flag");
-            vm.SaveSchedule();
-            check(ScheduleSettings.Read(service.Read()).Accounts == 3 && vm.Status.Contains("persisted and verified", StringComparison.Ordinal),
-                "Schedule apply resumes after the challenge activity window elapses");
-            ConfirmationResume(check, vm, source, start, service);
             vm.CaptchaNotifications = false;
             check(vm.CaptchaStatusText == "CAPTCHA notifications off", "Notification preference controls the status tile without affecting diagnostics");
             check(vm.CaptchaDiagnostics.Contains("never reads challenge images", StringComparison.Ordinal),

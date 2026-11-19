@@ -50,13 +50,6 @@ public sealed class Preferences
  public int WorkMin {get;set;}=60;public int WorkMax {get;set;}=120;
  public int RestMin {get;set;}=10;public int RestMax {get;set;}=20;
  public bool CaptchaNotifications {get;set;}=true;
- public bool CaptchaPauseApplies {get;set;}
- public bool CaptchaResumeConfirmation {get;set;}
- public bool VisualDetectionEnabled {get;set;}
- public bool VisualDetectionSound {get;set;}=true;
- public int VisualDetectionSensitivity {get;set;}=50;
- public int VisualDetectionIntervalSeconds {get;set;}=4;
- public string? VisualDetectionTemplateFolder {get;set;}
  [JsonExtensionData]public Dictionary<string,JsonElement>? Extra {get;set;}
 }
 public record Detection(string Character,string Server,string Client,string Process,string? Installation)

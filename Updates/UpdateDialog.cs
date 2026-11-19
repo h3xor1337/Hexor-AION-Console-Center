@@ -36,13 +36,40 @@ public sealed class UpdateAvailableDialog : Window
         var installed = new StackPanel(); installed.Children.Add(Text("INSTALLED", 10, true, "#8F839F")); installed.Children.Add(Text(installedVersion, 18, true, "#F5F1FF")); versions.Children.Add(installed);
         var available = new StackPanel(); available.Children.Add(Text("AVAILABLE", 10, true, "#8F839F")); available.Children.Add(Text(release.Version, 18, true, "#D8B8FF")); Grid.SetColumn(available, 1); versions.Children.Add(available); root.Children.Add(versions);
         root.Children.Add(Text("WHAT'S NEW", 10, true, "#8F839F"));
-        var releaseNotes = release.ReleaseNotes.Trim(); if (releaseNotes.Length > 900) releaseNotes = releaseNotes[..900] + "…";
-        root.Children.Add(new TextBlock { Text = releaseNotes, Foreground = Brush("#E7E0EF"), TextWrapping = TextWrapping.Wrap, MaxHeight = 150, Margin = new(0, 6, 0, 14) });
+        root.Children.Add(BuildReleaseNotes(release.ReleaseNotes));
         root.Children.Add(size); root.Children.Add(progress); root.Children.Add(stage); root.Children.Add(detail);
         var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new(0, 22, 0, 0) };
         updateNow.Name = "UpdateNowButton"; updateNow.IsDefault = true; later.Name = "UpdateLaterButton"; later.IsCancel = true;
         actions.Children.Add(later); actions.Children.Add(updateNow); root.Children.Add(actions);
         later.Click += (_, _) => Close(); updateNow.Click += async (_, _) => await StartUpdate();
+    }
+
+    // Changelog lines arrive as lightweight markdown ("#", "##", "- " bullets). Render them as a
+    // readable list instead of dumping the raw source; internal details never appear by design.
+    static System.Windows.Controls.StackPanel BuildReleaseNotes(string notes)
+    {
+        var panel = new System.Windows.Controls.StackPanel { Margin = new(0, 6, 0, 14) };
+        foreach (var raw in notes.Replace("\r\n", "\n").Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.Length == 0) { panel.Children.Add(new System.Windows.Controls.TextBlock { Height = 6 }); continue; }
+            var isHeading = line.StartsWith('#');
+            line = line.TrimStart('#').Trim();
+            if (line.Length == 0) continue;
+            if (line.StartsWith("- ") || line.StartsWith("* ")) line = "•  " + line[2..].Trim();
+            panel.Children.Add(new System.Windows.Controls.TextBlock
+            {
+                Text = line,
+                FontSize = isHeading ? 14 : 12.5,
+                FontWeight = isHeading || !line.StartsWith("•") ? FontWeights.SemiBold : FontWeights.Normal,
+                Foreground = Brush(isHeading ? "#D8B8FF" : "#E7E0EF"),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new(isHeading ? 0 : 10, 0, 0, isHeading ? 2 : 3),
+            });
+        }
+        var viewer = new ScrollViewer { MaxHeight = 240, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = panel };
+        var host = new System.Windows.Controls.StackPanel(); host.Children.Add(viewer);
+        return host;
     }
 
     async Task StartUpdate()

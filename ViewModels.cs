@@ -438,51 +438,6 @@ public sealed class MainViewModel : Observable, IDisposable
         : $"Latest challenge activity ({CaptchaRecordLines.Count} entries).";
     private readonly object recordLock = new();
     private readonly List<(DateTimeOffset At, string Text)> solverRecordHistory = new();
-    // Pause hold for Hexor's own apply actions. Hexor never pauses or controls the running
-    // automation: only Hexor's own provider-setting applies (workflow/schedule) are held while a
-    // challenge signal is active, and — when CaptchaResumeConfirmation is enabled — until the
-    // customer confirms resumption after the active signal ends.
-    private bool challengeResumePending;
-    private bool challengePauseArmed;
-    public bool ChallengeResumePending => challengeResumePending;
-    private bool VisualChallengeActive => Preferences.VisualDetectionEnabled && visualSnapshot.ChallengeActive;
-    private bool ChallengeSignalActive => captchaSnapshot.ChallengeActive || VisualChallengeActive;
-    private bool ChallengePauseBlocking => ChallengeSignalActive || challengeResumePending;
-    private string ChallengePauseMessage => ChallengeSignalActive
-        ? "CAPTCHA detected — apply is paused while the challenge signal is active. Complete or confirm the challenge, then apply again."
-        : "Apply resumption is waiting for your confirmation. Check the game, then choose Confirm apply resume.";
-    public void ConfirmChallengeResume()
-    {
-        if (!challengeResumePending) { Status = "No apply resumption is waiting for confirmation."; return; }
-        challengeResumePending = false;
-        Changed(nameof(ChallengeResumePending));
-        Status = "Apply resumption confirmed in Hexor. Automation was never paused or controlled by Hexor.";
-    }
-    private void UpdateChallengePauseState()
-    {
-        var previousPending = challengeResumePending;
-        if (ChallengeSignalActive)
-        {
-            challengeResumePending = false;
-            challengePauseArmed = true;
-        }
-        else if (challengePauseArmed)
-        {
-            challengePauseArmed = false;
-            if (CaptchaResumeConfirmation) challengeResumePending = true;
-        }
-        else if (challengeResumePending && !CaptchaResumeConfirmation) challengeResumePending = false;
-        if (previousPending != challengeResumePending) Changed(nameof(ChallengeResumePending));
-    }
-
-    private readonly VisualChallengeMonitor visualMonitor;
-    private VisualMonitorSnapshot visualSnapshot = new(VisualMonitorPhase.Idle, null, null, null, "Visual monitoring has not run yet.", 0, 0, []);
-    private string visualStatusText = "Visual monitoring starting";
-    private string visualDetail = "";
-    private bool pollingVisual;
-    public string VisualMonitorStatusText { get => visualStatusText; private set => Set(ref visualStatusText, value); }
-    public string VisualMonitorDetail { get => visualDetail; private set => Set(ref visualDetail, value); }
-    public VisualMonitorSnapshot VisualSnapshot => visualSnapshot;
 
     // Live session controls and record reads over the installed LegionCommander runtime bridge.
     // Hexor observes state and issues only explicit operator-initiated controls (pause/continue/stop
@@ -731,6 +686,15 @@ public sealed class MainViewModel : Observable, IDisposable
         Changed(nameof(CaptchaRecordsSummary));
     }
 
+    // Audible alert: the moment a game client reports a challenge, play a system sound while
+    // the preference is on. The auto-resolve answers on its own; this only tells the operator.
+    private void PlayCaptchaAlert(int pid, string requestId, string imageBase64, string? mimeType)
+    {
+        if (!Preferences.CaptchaNotifications) return;
+        try { System.Media.SystemSounds.Exclamation.Play(); }
+        catch (Exception e) { Diagnostics.Log("captcha-solver", "alert-sound-failed; type=" + e.GetType().Name); }
+    }
+
     private void UpdateCaptchaAutoStatus()
     {
         lock (recordLock)
@@ -797,18 +761,18 @@ public sealed class MainViewModel : Observable, IDisposable
 
     public MainViewModel(IJsonConfigurationService? json = null, IRegistrySettingsService? registry = null, ILegionConfigurationService? configuration = null,
         ICharacterDetectionService? runtimeDetector = null, IConfigurationInspector? configurationInspector = null,
-        Func<IReadOnlyList<string>>? configurationCandidates = null, VendorUpdaterManager? vendorUpdater = null, CaptchaMonitor? captchaMonitor = null, VisualChallengeMonitor? visualMonitor = null)
+        Func<IReadOnlyList<string>>? configurationCandidates = null, VendorUpdaterManager? vendorUpdater = null, CaptchaMonitor? captchaMonitor = null)
     {
         automaticDiscovery = json == null && registry == null || configurationCandidates != null;
         this.runtimeDetector = runtimeDetector ?? new CharacterDetectionService(new GameInstallationDiscoveryService());
         this.vendorUpdater = vendorUpdater ?? new VendorUpdaterManager();
         this.captchaMonitor = captchaMonitor ?? new CaptchaMonitor();
-        this.visualMonitor = visualMonitor ?? new VisualChallengeMonitor(new WindowsGameWindowSource(), new PrintWindowFrameSource());
         this.configurationInspector = configurationInspector ?? new ConfigurationInspector();
         gameIpc.Changed += OnGameIpcChanged;
         gameIpc.Start();
         captchaSolver = new CaptchaAutoSolver(gameIpc);
         captchaSolver.Changed += () => OnGameIpcChanged();
+        gameIpc.CaptchaRequestReceived += PlayCaptchaAlert;
         UpdateCaptchaAutoStatus();
         Json = json ?? new JsonConfigurationService(Path.Combine(Diagnostics.Root, "preferences.json"), new SettingsBackupService());
         Registry = registry ?? new RegistrySettingsService();
@@ -1071,7 +1035,6 @@ public sealed class MainViewModel : Observable, IDisposable
             }
             Preferences.GatherMin = min; Preferences.GatherMax = max; if (Save()) Status = "Saved Hexor draft only; choose a valid game configuration to apply."; return;
         }
-        if (CaptchaPauseApplies && ChallengePauseBlocking) { Status = ChallengePauseMessage.Replace("apply is paused", "workflow apply is paused").Replace("apply resumption is waiting", "workflow apply resumption is waiting"); return; }
         if (!session.Ready) { Status = session.Document.Message; return; }
         try
         {
@@ -1090,7 +1053,6 @@ public sealed class MainViewModel : Observable, IDisposable
             Preferences.MaxAccounts = accounts; Preferences.WorkMin = min; Preferences.WorkMax = max; Preferences.RestMin = rmin; Preferences.RestMax = rmax;
             if (Save()) Status = "Saved Hexor schedule draft only; no scheduler notification sent."; return;
         }
-        if (CaptchaPauseApplies && ChallengePauseBlocking) { Status = ChallengePauseMessage.Replace("apply is paused", "schedule apply is paused").Replace("apply resumption is waiting", "schedule apply resumption is waiting"); return; }
         if (!session.Ready) { Status = session.Document.Message; return; }
         try { session.SaveSchedule(new(Preferences.ScheduleEnabled, accounts, min, max, rmin, rmax)); Status = "Work Schedule persisted and verified. It applies when the game or the next task starts."; }
         catch (Exception e) { ReportSaveFailure(e); }
@@ -1212,33 +1174,22 @@ public sealed class MainViewModel : Observable, IDisposable
             RefreshCaptchaTexts(captchaSnapshot); Changed();
         }
     }
-    public bool CaptchaPauseApplies
-    {
-        get => Preferences.CaptchaPauseApplies;
-        set
-        {
-            if (Preferences.CaptchaPauseApplies == value) return;
-            var previous = Preferences.CaptchaPauseApplies; Preferences.CaptchaPauseApplies = value;
-            if (!Save()) Preferences.CaptchaPauseApplies = previous;
-            RefreshCaptchaTexts(captchaSnapshot); Changed();
-        }
-    }
-    public bool CaptchaResumeConfirmation
-    {
-        get => Preferences.CaptchaResumeConfirmation;
-        set
-        {
-            if (Preferences.CaptchaResumeConfirmation == value) return;
-            var previous = Preferences.CaptchaResumeConfirmation; Preferences.CaptchaResumeConfirmation = value;
-            if (!Save()) Preferences.CaptchaResumeConfirmation = previous;
-            if (!value && challengeResumePending) { challengeResumePending = false; Changed(nameof(ChallengeResumePending)); }
-            Changed();
-        }
-    }
     // Observation of challenge signals on the game session.
+    // The game's own menu can rewrite a group document with stale values; re-assert Hexor's
+    // registry truth on startup and once a minute so disabled shop options stay disabled.
+    private DateTimeOffset lastSharedReconcile = DateTimeOffset.MinValue;
+    public void ReconcileSharedSettings()
+    {
+        if (DateTimeOffset.UtcNow - lastSharedReconcile < TimeSpan.FromMinutes(1)) return;
+        lastSharedReconcile = DateTimeOffset.UtcNow;
+        try { LegionSharedSettings.ReconcileAllGroups(Registry.RegistryRoot); }
+        catch (Exception e) { Diagnostics.Log("shared-settings", "reconcile-error; type=" + e.GetType().Name); }
+    }
+
     public async Task PollCaptchaAsync()
     {
         if (pollingCaptcha || lifetime.IsCancellationRequested) return;
+        ReconcileSharedSettings();
         pollingCaptcha = true;
         try
         {
@@ -1247,7 +1198,6 @@ public sealed class MainViewModel : Observable, IDisposable
                 Diagnostics.Log("captcha-monitor", $"phase={snapshot.Phase}; observed={(snapshot.LastSignalAt != null ? "yes" : "no")}");
             var previous = captchaSnapshot;
             captchaSnapshot = snapshot;
-            UpdateChallengePauseState();
             RefreshCaptchaTexts(snapshot);
             if (previous.ChallengeActive != snapshot.ChallengeActive) Changed(nameof(CaptchaChallengeActive));
             if (!ReferenceEquals(previous.RecentRecords, snapshot.RecentRecords))
@@ -1287,117 +1237,6 @@ public sealed class MainViewModel : Observable, IDisposable
         _ => "No challenge yet",
     };
     private static string TileTime(DateTimeOffset? time) => time?.ToLocalTime().ToString("HH:mm:ss") ?? "";
-    // Read-only visual challenge detection on the AION2 window. Detection and notification only:
-    // Hexor never reads challenge answer content, never generates or submits answers, and this
-    // poll never issues pause or resume commands to any automation task.
-    public async Task PollVisualMonitorAsync()
-    {
-        if (pollingVisual || lifetime.IsCancellationRequested || !Preferences.VisualDetectionEnabled) return;
-        pollingVisual = true;
-        try
-        {
-            visualMonitor.Options = new VisualChallengeMonitorOptions
-            {
-                Interval = TimeSpan.FromSeconds(Math.Clamp(ParseVisualInterval(), 1, 60)),
-                Threshold = VisualThreshold(),
-                TemplateFolder = Preferences.VisualDetectionTemplateFolder,
-            };
-            var previousPhase = visualSnapshot.Phase;
-            var snapshot = await Task.Run(visualMonitor.Poll, lifetime.Token);
-            if (snapshot.Phase != previousPhase || snapshot.Detail != visualSnapshot.Detail)
-                Diagnostics.Log("visual-monitor", $"phase={snapshot.Phase}; windows={snapshot.WindowCount}; templates={snapshot.TemplateCount}" +
-                    (snapshot.Confidence is { } confidence ? $"; confidence={confidence:F2}" : ""));
-            visualSnapshot = snapshot;
-            UpdateChallengePauseState();
-            visualStatusText = VisualTile(snapshot);
-            visualDetail = string.Join(Environment.NewLine, snapshot.Detail,
-                "Detection is visual only: Hexor never reads challenge answer content, never generates or submits answers, and never pauses automation.",
-                $"Windows: {snapshot.WindowCount}; patterns: {snapshot.TemplateCount}; interval: {ParseVisualInterval()}s; threshold: {VisualThreshold():F2}.",
-                snapshot.LauncherSummary.Length > 0 ? "Launcher provenance: " + snapshot.LauncherSummary + "." : "Launcher provenance unavailable (parent process could not be attributed).");
-            Changed(nameof(VisualMonitorStatusText)); Changed(nameof(VisualMonitorDetail));
-            if (snapshot.Phase == VisualMonitorPhase.ChallengeDetected && previousPhase != VisualMonitorPhase.ChallengeDetected && Preferences.VisualDetectionSound)
-                System.Media.SystemSounds.Exclamation.Play();
-        }
-        catch (OperationCanceledException) { }
-        catch (Exception e) { Diagnostics.Log("visual-monitor", "poll-failed; type=" + e.GetType().Name); }
-        finally { pollingVisual = false; }
-    }
-    private double VisualThreshold() => Math.Clamp(0.98 - Preferences.VisualDetectionSensitivity / 100.0 * 0.38, 0.60, 0.98);
-    private int ParseVisualInterval()
-    {
-        try { return int.Parse(VisualDetectionIntervalText, CultureInfo.InvariantCulture); }
-        catch (Exception e) when (e is FormatException or OverflowException) { return Preferences.VisualDetectionIntervalSeconds; }
-    }
-    private static string VisualTile(VisualMonitorSnapshot snapshot) => snapshot.Phase switch
-    {
-        VisualMonitorPhase.ChallengeDetected => "Visual challenge detected " + TileTime(snapshot.DetectedAt),
-        VisualMonitorPhase.Monitoring => "Monitoring " + TileTime(snapshot.RecentEvents.Count > 0 ? snapshot.RecentEvents[^1].ObservedAt : null),
-        VisualMonitorPhase.Resolved => "Visual pattern no longer detected",
-        VisualMonitorPhase.Error => "Visual monitor error",
-        _ => "Visual detection off",
-    };
-    public bool VisualDetectionEnabled
-    {
-        get => Preferences.VisualDetectionEnabled;
-        set
-        {
-            if (Preferences.VisualDetectionEnabled == value) return;
-            var previous = Preferences.VisualDetectionEnabled; Preferences.VisualDetectionEnabled = value;
-            if (!Save()) { Preferences.VisualDetectionEnabled = previous; return; }
-            Diagnostics.Log("visual-monitor", "detection=" + (value ? "enabled" : "disabled"));
-            if (!value) { visualSnapshot = visualSnapshot with { Phase = VisualMonitorPhase.Idle }; visualStatusText = "Visual detection off"; Changed(nameof(VisualMonitorStatusText)); }
-            Changed();
-        }
-    }
-    public bool VisualDetectionSound
-    {
-        get => Preferences.VisualDetectionSound;
-        set
-        {
-            if (Preferences.VisualDetectionSound == value) return;
-            var previous = Preferences.VisualDetectionSound; Preferences.VisualDetectionSound = value;
-            if (!Save()) Preferences.VisualDetectionSound = previous;
-            Changed();
-        }
-    }
-    public int VisualDetectionSensitivity
-    {
-        get => Preferences.VisualDetectionSensitivity;
-        set
-        {
-            var clamped = Math.Clamp(value, 0, 100);
-            if (Preferences.VisualDetectionSensitivity == clamped) return;
-            var previous = Preferences.VisualDetectionSensitivity; Preferences.VisualDetectionSensitivity = clamped;
-            if (!Save()) Preferences.VisualDetectionSensitivity = previous;
-            Changed();
-        }
-    }
-    private string visualDetectionIntervalText = "";
-    public string VisualDetectionIntervalText
-    {
-        get => visualDetectionIntervalText.Length == 0 ? Preferences.VisualDetectionIntervalSeconds.ToString(CultureInfo.InvariantCulture) : visualDetectionIntervalText;
-        set
-        {
-            visualDetectionIntervalText = value;
-            if (!int.TryParse(value, CultureInfo.InvariantCulture, out var parsed)) return;
-            parsed = Math.Clamp(parsed, 1, 60);
-            if (Preferences.VisualDetectionIntervalSeconds == parsed) return;
-            var previous = Preferences.VisualDetectionIntervalSeconds; Preferences.VisualDetectionIntervalSeconds = parsed;
-            if (!Save()) Preferences.VisualDetectionIntervalSeconds = previous;
-        }
-    }
-    public string VisualDetectionTemplateFolder
-    {
-        get => Preferences.VisualDetectionTemplateFolder ?? DefaultVisualTemplateFolder;
-        set
-        {
-            if (string.Equals(VisualDetectionTemplateFolder, value, StringComparison.OrdinalIgnoreCase)) return;
-            var previous = Preferences.VisualDetectionTemplateFolder; Preferences.VisualDetectionTemplateFolder = string.IsNullOrWhiteSpace(value) ? null : value;
-            if (!Save()) Preferences.VisualDetectionTemplateFolder = previous;
-            Changed();
-        }
-    }
-    public static string DefaultVisualTemplateFolder => Path.Combine(AppContext.BaseDirectory, "ChallengeTemplates");
     public void Dispose()
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;

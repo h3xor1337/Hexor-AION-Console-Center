@@ -21,7 +21,6 @@ internal static class Program
   if(args.Length==1&&args[0]=="--game-ipc-only")return RunFocused(GameIpcTests.Run);
   if(args.Length==1&&args[0]=="--captcha-solver-only")return RunFocused(CaptchaAutoSolverTests.Run);
   if(args.Length==1&&args[0]=="--game-ipc-live")return RunFocused(GameIpcLiveTests.Run);
-  if(args.Length==1&&args[0]=="--visual-only")return RunFocused(VisualChallengeMonitorTests.Run);
   if(args.Length==1&&args[0]=="--launcher-only")return RunFocused((_,check)=>LauncherProvenanceTests.Run(check));
   if(args.Length==1&&args[0]=="--storage-audit-only")return RunFocused((root,check)=>
   {
@@ -107,7 +106,6 @@ internal static class Program
    TestCheckpoint.Run(nameof(RuntimeMcpClientTests),()=>RuntimeMcpClientTests.Run(root,Assert),120);
    TestCheckpoint.Run(nameof(GameIpcTests),()=>GameIpcTests.Run(root,Assert),60);
    TestCheckpoint.Run(nameof(CaptchaAutoSolverTests),()=>CaptchaAutoSolverTests.Run(root,Assert),60);
-   TestCheckpoint.Run(nameof(VisualChallengeMonitorTests),()=>VisualChallengeMonitorTests.Run(root,Assert),120);
    TestCheckpoint.Run(nameof(LauncherProvenanceTests),()=>LauncherProvenanceTests.Run(Assert),120);
    LcRegistryFeatureTests.SeedGathering(registryRoot);
    RunWpfRegression(root,json,reg);

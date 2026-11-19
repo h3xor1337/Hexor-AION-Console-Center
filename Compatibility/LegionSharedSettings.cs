@@ -125,6 +125,33 @@ public static class LegionSharedSettings
         return true;
     }
 
+    // Drift watchdog: the game's own menu can rewrite a group document after the customer
+    // disabled a toggle in Hexor, so the game keeps buying items even though every option is
+    // off. ReconcileAllGroups re-asserts the registry truth into every group document, but only
+    // rewrites files whose content actually differs (no churn, no log spam).
+    public static void ReconcileAllGroups(string? registryRoot)
+    {
+        var liveRoot = (registryRoot ?? "Software\\LegionCommander") == "Software\\LegionCommander";
+        if (!liveRoot && SharedDirectoryOverride is null) return; // disposable test branches never touch the live store
+        var groups = Mappings.Select(m => m.Group).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        foreach (var group in groups)
+        {
+            try
+            {
+                var path = Path.Combine(ResolveSharedDirectory(), group + ".json");
+                var before = File.Exists(path) ? File.ReadAllText(path) : "";
+                if (!SyncGroup(ResolveSharedDirectory(), group, registryRoot)) continue;
+                var after = File.Exists(path) ? File.ReadAllText(path) : "";
+                if (!string.Equals(before, after, StringComparison.Ordinal))
+                    Diagnostics.Log("shared-settings", $"reconciled; group={group}; drift-corrected=true");
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                Diagnostics.Log("shared-settings", $"reconcile-failed; group={group}; type={e.GetType().Name}", DiagnosticSeverity.Warning);
+            }
+        }
+    }
+
     // Rebuilds the group document from the current registry values so a missing or stale document
     // (the coin-shop failure mode) is repaired wholesale, not only for the last write. Keys that
     // exist in the document but are not registry-backed (gather targets/tables) are preserved.
@@ -163,9 +190,10 @@ public static class LegionSharedSettings
             existing = null; // the vendor quarantines corrupt documents and rebuilds the same way
         }
         existing ??= new JsonObject { ["updatedBy"] = "commander" };
-        existing["schema"] = 1;
-        existing["updatedBy"] = "commander";
-        existing["updatedAt"] = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'");
+        var currentValuesText = (existing["values"] as JsonObject)?.ToJsonString();
+        var currentMirrorText = (existing["registryMirror"] as JsonObject)?.ToJsonString();
+        var currentBy = existing["updatedBy"]?.GetValue<string>();
+        var currentSchema = existing["schema"]?.GetValue<int>();
 
         var merged = existing["values"] as JsonObject ?? new JsonObject();
         foreach (var (key, node) in values)
@@ -173,6 +201,19 @@ public static class LegionSharedSettings
             if (node is null) continue;
             merged[key] = node.DeepClone();
         }
+        if (RetiredGroupKeys.TryGetValue(group, out var retiredKeysEarly))
+            foreach (var retiredKey in retiredKeysEarly) merged.Remove(retiredKey);
+
+        // An already-correct document is left byte-for-byte untouched: no write churn from
+        // repeated reconciles, and the vendor's own updatedAt stays meaningful.
+        if (currentSchema == 1 && currentBy == "commander"
+            && string.Equals(currentValuesText, merged.ToJsonString(), StringComparison.Ordinal)
+            && string.Equals(currentMirrorText, mirror.ToJsonString(), StringComparison.Ordinal))
+            return true;
+
+        existing["schema"] = 1;
+        existing["updatedBy"] = "commander";
+        existing["updatedAt"] = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'");
         if (RetiredGroupKeys.TryGetValue(group, out var retiredKeys))
             foreach (var retiredKey in retiredKeys) { merged.Remove(retiredKey); mirror.Remove(retiredKey); }
         existing["values"] = merged;
