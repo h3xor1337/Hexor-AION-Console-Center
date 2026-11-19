@@ -6,10 +6,16 @@ internal static class CaptchaAutoSolverTests
 {
     public static void Run(string root, Action<bool, string> check)
     {
-        Payloads(check);
-        SolverFlow(check).GetAwaiter().GetResult();
-        DelayAndSamples(check).GetAwaiter().GetResult();
-        Disabled(check);
+        var unitSampleDirectory = Path.Combine(root, "captcha-solver-samples");
+        CaptchaAutoSolver.SampleDirectoryResolver = () => unitSampleDirectory;
+        try
+        {
+            Payloads(check);
+            SolverFlow(check).GetAwaiter().GetResult();
+            DelayAndSamples(check).GetAwaiter().GetResult();
+            Disabled(check);
+        }
+        finally { CaptchaAutoSolver.SampleDirectoryResolver = () => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Hexor", "ControlCenter", "CaptchaSamples"); }
     }
 
     private static void Payloads(Action<bool, string> check)
