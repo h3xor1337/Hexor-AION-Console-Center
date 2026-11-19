@@ -6,6 +6,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Win32;
 
 namespace Hexor.Runtime;
 
@@ -51,6 +52,158 @@ internal static class CaptchaSolverKey
             return null;
         }
     }
+}
+
+// The updater's shared recognition service: the customer's updater login authorizes challenges
+// on the regional endpoints. The authorization token lives in a disguised registry location —
+// verified against the updater's own client, including the JSON envelope and task lifecycle.
+public sealed class CaptchaServicePermanentException(string message) : InvalidOperationException(message);
+
+public sealed class AionRecognitionClient(Func<string?>? tokenResolver = null, string[]? endpoints = null, HttpClient? httpClient = null) : IDisposable
+{
+    private static readonly string[] DefaultEndpoints =
+    [
+        "https://decode-ty.aion.onl",
+        "https://decode-sg.aion.onl",
+        "https://decode-hk.aion.onl",
+    ];
+    private const string CreatePath = "/api/v8/55bff2a9-2611-4d73-94e9-3f4f8ebfe9e4";
+    private const string PollPath = "/api/v8/5bf5a8c6-f122-4b67-8230-30d4d6ec73c6";
+    private readonly HttpClient http = httpClient ?? new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(20) };
+    private readonly string[] resolvedEndpoints = endpoints is { Length: > 0 } ? endpoints : DefaultEndpoints;
+    private readonly Func<string?> resolvedTokenResolver = tokenResolver ?? ReadVendorAuthorizationToken;
+    private readonly bool ownsHttpClient = httpClient is null;
+
+    public static string? ReadVendorAuthorizationToken()
+    {
+        try
+        {
+            using var pointer = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Reliability");
+            var machineId = pointer?.GetValue("MachineId") as string;
+            if (string.IsNullOrWhiteSpace(machineId)) return null;
+            using var state = Registry.CurrentUser.OpenSubKey("Software\\Microsoft\\" + machineId);
+            var raw = state?.GetValue("V6AuthorizationState") as string;
+            if (raw is null) return null;
+            using var document = JsonDocument.Parse(raw);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("schemaVersion", out var version) || version.GetInt32() != 1) return null;
+            if (!root.TryGetProperty("token", out var token)) return null;
+            var value = token.GetString();
+            if (string.IsNullOrWhiteSpace(value)) return null;
+            // The login is refreshed by the updater; skip the service entirely once it expires.
+            if (root.TryGetProperty("expiryTime", out var expiry) && expiry.TryGetInt64(out var expiryMs) && expiryMs > 0
+                && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() >= expiryMs) return null;
+            return value.Trim();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException
+            or System.Text.Json.JsonException or InvalidOperationException or ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    public void Dispose()
+    {
+        if (ownsHttpClient) http.Dispose();
+    }
+
+    public async Task<string> SolveAsync(string imageBase64, CancellationToken stop)
+    {
+        var token = resolvedTokenResolver()?.Trim();
+        if (string.IsNullOrWhiteSpace(token))
+            throw new InvalidOperationException("The recognition service is not signed in.");
+        var image = Convert.FromBase64String(imageBase64.Trim());
+        if (image.Length is 0 or > 6_291_456)
+            throw new InvalidDataException("Captcha image is empty or too large.");
+        var payload = imageBase64.Trim();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(stop);
+        deadline.CancelAfter(TimeSpan.FromSeconds(45));
+        string? permanent = null;
+        for (var attempt = 0; attempt < resolvedEndpoints.Length * 2 && !deadline.IsCancellationRequested; attempt++)
+        {
+            try
+            {
+                return await RecognizeOnce(resolvedEndpoints[attempt % resolvedEndpoints.Length], token, payload, deadline.Token);
+            }
+            catch (CaptchaServicePermanentException e)
+            {
+                permanent = e.Message;
+                break;
+            }
+            catch (OperationCanceledException) when (stop.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1), deadline.Token);
+            }
+        }
+        throw permanent is { Length: > 0 }
+            ? new CaptchaServicePermanentException(permanent)
+            : new InvalidOperationException("The recognition service did not answer in time.");
+    }
+
+    private async Task<string> RecognizeOnce(string endpoint, string token, string payload, CancellationToken stop)
+    {
+        var create = await PostAsync(endpoint + CreatePath, new Dictionary<string, object?>
+        {
+            ["authorizationToken"] = token,
+            ["task"] = new Dictionary<string, object?> { ["type"] = "Aion2", ["body"] = payload },
+        }, stop);
+        var immediate = SolutionText(create);
+        if (!string.IsNullOrWhiteSpace(immediate)) return immediate.Trim();
+        var taskId = create.TryGetProperty("taskId", out var id) ? id.ToString() : "";
+        if (string.IsNullOrWhiteSpace(taskId))
+            throw new InvalidDataException("The recognition service returned no task ID.");
+        while (true)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(1), stop);
+            var poll = await PostAsync(endpoint + PollPath, new Dictionary<string, object?>
+            {
+                ["authorizationToken"] = token,
+                ["taskId"] = taskId,
+            }, stop);
+            var status = poll.TryGetProperty("status", out var state) ? state.GetString() : null;
+            if (status == "ready")
+                return SolutionText(poll)?.Trim() is { Length: > 0 } text
+                    ? text : throw new InvalidDataException("The recognition service returned no answer text.");
+            if (status != "processing")
+                throw new InvalidOperationException("The recognition service returned an unknown task status.");
+        }
+    }
+
+    private async Task<JsonElement> PostAsync(string url, Dictionary<string, object?> body, CancellationToken stop)
+    {
+        using var response = await http.PostAsJsonAsync(url, body, JsonOptions, stop);
+        var statusCode = (int)response.StatusCode;
+        if (statusCode is 404 or 410 or 426)
+            throw new CaptchaServicePermanentException($"The recognition service declined this interface (HTTP {statusCode}); the updater needs an upgrade.");
+        response.EnsureSuccessStatusCode();
+        using var document = await JsonDocument.ParseAsync(
+            await response.Content.ReadAsStreamAsync(stop), cancellationToken: stop);
+        var root = document.RootElement.Clone();
+        var errorId = root.TryGetProperty("errorId", out var eid) ? eid.GetInt32() : 0;
+        var success = root.TryGetProperty("success", out var ok) ? ok.GetBoolean() : true;
+        if (errorId == 0 && success) return root;
+        var code = root.TryGetProperty("errorCode", out var ec) ? ec.GetString()
+            : root.TryGetProperty("code", out var c) ? c.GetString() : null;
+        var description = root.TryGetProperty("errorDescription", out var ed) ? ed.GetString()
+            : root.TryGetProperty("error", out var e2) ? e2.GetString() : null;
+        if (string.Equals(code, "CLIENT_UPGRADE_REQUIRED", StringComparison.OrdinalIgnoreCase))
+            throw new CaptchaServicePermanentException(description ?? "The recognition service requires a newer updater.");
+        throw new InvalidOperationException($"The recognition service rejected the task ({code ?? "UNKNOWN_ERROR"}: {description ?? "unknown error"}).");
+    }
+
+    private static string? SolutionText(JsonElement root) =>
+        root.TryGetProperty("solution", out var solution) &&
+        solution.TryGetProperty("text", out var text) ? text.GetString() : null;
+
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 }
 
 public sealed class YesCaptchaClient(HttpClient http, string endpoint, string clientKey)
@@ -114,6 +267,7 @@ public sealed class CaptchaAutoSolver : IDisposable
 {
     private readonly GameIpcManager manager;
     private readonly Func<string, CancellationToken, Task<string>> solve;
+    private readonly AionRecognitionClient? vendorClient;
     private readonly ConcurrentDictionary<string, byte> pending = new();
     private readonly ConcurrentDictionary<string, byte> seenRequests = new();
     private int solved;
@@ -126,25 +280,75 @@ public sealed class CaptchaAutoSolver : IDisposable
     private readonly int maximumAnswerDelayMs;
     private readonly object historyLock = new();
     private readonly List<(DateTimeOffset At, string Text)> history = new();
+    private string lastProvider = "";
 
     public CaptchaAutoSolver(GameIpcManager manager, Func<string, CancellationToken, Task<string>>? solveOverride = null, string? keyOverride = null,
-        int minimumAnswerDelayMs = 700, int maximumAnswerDelayMs = 2200)
+        int minimumAnswerDelayMs = 700, int maximumAnswerDelayMs = 2200, Func<string?>? vendorTokenResolver = null,
+        Func<string, CancellationToken, Task<string>>? vendorSolveOverride = null)
     {
         this.manager = manager;
         this.minimumAnswerDelayMs = Math.Clamp(minimumAnswerDelayMs, 0, 10_000);
         this.maximumAnswerDelayMs = Math.Clamp(Math.Max(maximumAnswerDelayMs, this.minimumAnswerDelayMs), this.minimumAnswerDelayMs, 15_000);
         var key = keyOverride ?? CaptchaSolverKey.Unlock();
-        enabled = !string.IsNullOrWhiteSpace(key);
+        // Primary: the updater's shared recognition service (no key, uses the updater login).
+        // Failover: the embedded recognition key. A direct solve override replaces the whole chain.
+        vendorClient = solveOverride is null
+            ? vendorSolveOverride is { } injected ? null : new AionRecognitionClient(vendorTokenResolver)
+            : null;
+        Func<string, CancellationToken, Task<string>>? vendorSolve = solveOverride is { }
+            ? null
+            : vendorSolveOverride ?? (vendorClient is null ? null : new Func<string, CancellationToken, Task<string>>(vendorClient.SolveAsync));
+        var vendorToken = vendorSolveOverride is { }
+            ? "injected"
+            : (vendorTokenResolver ?? AionRecognitionClient.ReadVendorAuthorizationToken)();
+        enabled = !string.IsNullOrWhiteSpace(key) || vendorSolve is { } && !string.IsNullOrWhiteSpace(vendorToken);
         if (enabled)
         {
-            var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-            var endpoint = Environment.GetEnvironmentVariable("YESCAPTCHA_BASE_URL")?.TrimEnd('/') ?? "https://api.yescaptcha.com";
-            var client = new YesCaptchaClient(http, endpoint, key.Trim());
-            solve = solveOverride ?? client.SolveAsync;
+            Func<string, CancellationToken, Task<string>> backup;
+            if (!string.IsNullOrWhiteSpace(key))
+            {
+                var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+                var endpoint = Environment.GetEnvironmentVariable("YESCAPTCHA_BASE_URL")?.TrimEnd('/') ?? "https://api.yescaptcha.com";
+                backup = new YesCaptchaClient(http, endpoint, key.Trim()).SolveAsync;
+            }
+            else backup = (_, _) => throw new InvalidOperationException("No backup recognition key.");
+            solve = solveOverride ?? ComposeSolvers(vendorSolve, backup, RecordProvider);
         }
         else solve = solveOverride ?? ((_, _) => throw new InvalidOperationException("No solver key."));
         manager.CaptchaRequestReceived += OnChallenge;
         manager.CaptchaOutcomeReceived += OnOutcome;
+    }
+
+    private void RecordProvider(string provider)
+    {
+        lastProvider = provider;
+    }
+
+    // Primary service first; any failure (not signed in, quota, outage) falls back to the backup
+    // key so solving never stalls. Cancellation propagates untouched.
+    internal static Func<string, CancellationToken, Task<string>> ComposeSolvers(
+        Func<string, CancellationToken, Task<string>>? primary,
+        Func<string, CancellationToken, Task<string>> failover,
+        Action<string>? providerReport = null)
+    {
+        return async (image, stop) =>
+        {
+            if (primary is { } first)
+            {
+                try
+                {
+                    var answer = await first(image, stop);
+                    providerReport?.Invoke("AION recognition");
+                    return answer;
+                }
+                catch (Exception e) when (e is not OperationCanceledException)
+                {
+                    Diagnostics.TryLog("captcha-solver", "shared recognition unavailable (" + e.Message + "); using the backup service.");
+                }
+            }
+            providerReport?.Invoke("backup");
+            return await failover(image, stop);
+        };
     }
 
     public bool Enabled => enabled;
@@ -222,9 +426,10 @@ public sealed class CaptchaAutoSolver : IDisposable
     }
 
     public string Describe() =>
-        !enabled ? "Auto-resolve is not configured: the solver key is missing."
+        !enabled ? "Auto-resolve is not configured: no recognition service is available."
         : $"Auto-resolve is active. Solved {solved} · rejected {rejected} · failed {failed}"
           + (pending.Count > 0 ? $" · {pending.Count} in progress" : "")
+          + (lastProvider.Length > 0 ? $" · last answer via {lastProvider}" : "")
           + $"\n{lastEvent}";
 
     internal async void OnChallenge(int pid, string requestId, string imageBase64, string? mimeType)
@@ -319,5 +524,6 @@ public sealed class CaptchaAutoSolver : IDisposable
     {
         manager.CaptchaRequestReceived -= OnChallenge;
         manager.CaptchaOutcomeReceived -= OnOutcome;
+        vendorClient?.Dispose();
     }
 }
