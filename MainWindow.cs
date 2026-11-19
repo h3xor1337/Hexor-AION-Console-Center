@@ -409,7 +409,7 @@ public sealed class MainWindow : Window
  private void AutoDungeonPage(StackPanel root)
  {
   var selection=Section(root,"Dungeon selection","The first enterable dungeon from the top is used: unchecked dungeons or those whose requirement is not met are skipped. The chosen dungeon is queued until it starts; list changes apply from the next round.");
-  RadioRow(selection,"Mode","DungeonMode",("DungeonModeNormal","Normal",0),("DungeonModeConquest","Conquest",1));
+  RadioRow(selection,"Mode","DungeonMode",("DungeonModeSmart","Smart",0),("DungeonModeOrder","Priority order",1));
   selection.Children.Add(Text(T("Dungeon priority"),13,true));
   var header=new Grid{Margin=new Thickness(0,6,8,2)};header.ColumnDefinitions.Add(new(){Width=new(26)});header.ColumnDefinitions.Add(new(){Width=GridLength.Auto});header.ColumnDefinitions.Add(new());header.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
   header.Children.Add(Text(T("#"),12,false,"#A99ABF"));

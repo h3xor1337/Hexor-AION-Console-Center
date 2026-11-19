@@ -184,7 +184,7 @@ internal static class Program
       layerLower.IsChecked=true;window.UpdateLayout();
       Assert(reg.Read("ResourceGrab","AbyssLayer")==21,"Abyss layer radio persists Lower 21");
       window.ShowPage(2);window.UpdateLayout();
-      var dungeonNormal=Radio("DungeonModeNormal");var dungeonConquest=Radio("DungeonModeConquest");
+      var dungeonNormal=Radio("DungeonModeSmart");var dungeonConquest=Radio("DungeonModeOrder");
       var dungeonList=LogicalTreeHelper.FindLogicalNode(window,"DungeonPriorityList") as System.Windows.Controls.ItemsControl;
       Assert(dungeonNormal.IsChecked==true&&!dungeonConquest.IsChecked==true
        &&dungeonList!=null&&window.Model.DungeonPriority.Count==4
@@ -192,7 +192,7 @@ internal static class Program
        &&window.Model.DungeonPriority.Count(r=>r.Enabled)==3,
        "Dungeon radios and priority show exact choices and the vendor-default order (Uruguru Cave disabled)");
       dungeonConquest!.IsChecked=true;window.UpdateLayout();
-      Assert(reg.Read("ResourceGrab","AutoDungeonMode")==1,"Dungeon mode radio persists Conquest 1");
+      Assert(reg.Read("ResourceGrab","AutoDungeonMode")==1,"Dungeon mode radio persists Priority order 1");
       window.UpdateLayout();
       Assert(dungeonList!.Items.Count==4&&window.Model.DungeonPriority.All(r=>!string.IsNullOrEmpty(r.Label)&&r.Ordinal>=1&&r.Ordinal<=4),
        "Dungeon priority rows keep their own numbered label element beside each toggle");
