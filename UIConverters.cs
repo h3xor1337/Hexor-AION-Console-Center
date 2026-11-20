@@ -12,3 +12,14 @@ public sealed class EqualToBoolConverter : IValueConverter
     public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) => Equals(value, parameter);
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => value is true ? parameter! : Binding.DoNothing;
 }
+
+// Keeps a step option visible but disabled unless the selected step's type matches the
+// parameter kind (the vendor editor's behavior: minutes and Reset timer apply only to
+// Gathering, Smart patrol only to Kinah Farming).
+public sealed class StepTypeEnabledConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is InstructionType type && parameter is string kind
+            && System.Enum.TryParse<InstructionType>(kind, out var expected) && type == expected;
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => Binding.DoNothing;
+}

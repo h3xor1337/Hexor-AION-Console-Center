@@ -529,24 +529,25 @@ public sealed class MainWindow : Window
 
  private void DailyActivities(StackPanel root)
  {
-  var workspace = new Grid();
-  // The sequence column needs less width than the settings column: balance the two so the
-  // left side does not leave a large empty area under the instruction card.
-  workspace.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(4, GridUnitType.Star) });
-  workspace.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(14) });
-  workspace.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(6, GridUnitType.Star) });
-  root.Children.Add(workspace);
-  var sequenceColumn = new StackPanel();
-  var detailColumn = new StackPanel();
-  Grid.SetColumn(detailColumn, 2);
-  workspace.Children.Add(sequenceColumn);
-  workspace.Children.Add(detailColumn);
-
-  var sequence = Section(sequenceColumn, "Instruction sequence");
+  // The vendor editor reads top to bottom in one column: templates, the step list, the
+  // selected step's options, the completion choice, the files row and the run controls.
+  // Every row wraps, so no button is ever cut off by the window size.
+  var sequence = Section(root, "Instruction sequence");
   var notice = Text("", 12, false, "#B9ADCA");
   notice.SetBinding(TextBlock.TextProperty, nameof(MainViewModel.WorkflowNotice));
   sequence.Children.Add(notice);
-  var steps = new ListBox { Name = "DailyWorkflowSteps", MinHeight = 140, MaxHeight = 420,
+  var templates = new WrapPanel();
+  foreach (var (label, action) in new (string, Action)[]
+  {
+   ("Restore default", () => Model.LoadDefaultWorkflow()),
+   ("Gold + gather", () => Model.Preset(1)),
+   ("Gather only", () => Model.Preset(2)),
+   ("Task + gold + gather", () => Model.Preset(3)),
+   ("Task + Krao + gold", () => Model.Preset(4)),
+  })
+   templates.Children.Add(Button(label, action));
+  sequence.Children.Add(templates);
+  var steps = new ListBox { Name = "DailyWorkflowSteps", MinHeight = 140, MaxHeight = 420, Margin = new Thickness(0, 10, 0, 0),
       Style = (Style)FindResource("WorkflowListStyle") };
   ScrollViewer.SetHorizontalScrollBarVisibility(steps, ScrollBarVisibility.Disabled);
   AutomationProperties.SetName(steps, T("Instruction sequence"));
@@ -565,23 +566,19 @@ public sealed class MainWindow : Window
   var actions = new WrapPanel();
   foreach (var (label, command) in new[]
   {
-   ("Add", Model.AddCommand), ("Duplicate", Model.DuplicateCommand), ("Delete", Model.DeleteCommand),
+   ("Add gathering", Model.AddGatherCommand), ("Add kinah farming", Model.AddKinahCommand),
+   ("Add auto dungeon", Model.AddAutoDungeonCommand), ("Add Auto Krao Dungeon", Model.AddKraoCommand),
+   ("Add switch character", Model.AddSwitchCommand),
+   ("Duplicate", Model.DuplicateCommand), ("Delete", Model.DeleteCommand),
    ("Move up", Model.UpCommand), ("Move down", Model.DownCommand)
   })
    actions.Children.Add(new Button { Content = T(label), Command = command, Margin = new Thickness(0, 7, 6, 0), Padding = new Thickness(10, 6, 10, 6), MinHeight = 36 });
   sequence.Children.Add(actions);
-  var workflowFiles = new WrapPanel();
-  workflowFiles.Children.Add(Button("Import workflow", ImportWorkflow));
-  workflowFiles.Children.Add(Button("Export workflow", ExportWorkflow));
-  workflowFiles.Children.Add(Button("Load default sequence", () =>
-  {
-   if (MessageBox.Show(this, "Replace the current draft sequence with the default sequence?",
-       "Default workflow", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
-    Model.LoadDefaultWorkflow();
-  }));
-  sequence.Children.Add(new Expander { Header = "Workflow files and defaults", Content = workflowFiles, Margin = new Thickness(2, 10, 0, 0) });
 
-  var detail = Section(detailColumn, "Activity settings");
+  // The selected step's options stay visible and are disabled when they do not apply,
+  // exactly like the vendor editor (minutes and Reset timer only for Gathering,
+  // Smart patrol only for Kinah Farming).
+  var detail = Section(root, "Selected step settings");
   detail.SetBinding(DataContextProperty, new Binding(nameof(MainViewModel.SelectedInstruction)));
   var showSelected = new Style(typeof(StackPanel));
   var noSelection = new DataTrigger { Binding = new Binding("."), Value = null };
@@ -591,42 +588,45 @@ public sealed class MainWindow : Window
   Check(detail, "Enabled", nameof(Instruction.Enabled));
   SelectOption(detail, "Activity type", "DailyActivityType",
       InstructionPresentation.Options.Select(option => (option.Value, option.Label)).ToArray(), nameof(Instruction.Type));
-  var gathering = new StackPanel();
-  var gatheringStyle = new Style(typeof(StackPanel));
-  gatheringStyle.Setters.Add(new Setter(VisibilityProperty, Visibility.Collapsed));
-  var isGathering = new DataTrigger { Binding = new Binding(nameof(Instruction.Type)), Value = InstructionType.Gathering };
-  isGathering.Setters.Add(new Setter(VisibilityProperty, Visibility.Visible));
-  gatheringStyle.Triggers.Add(isGathering);
-  gathering.Style = gatheringStyle;
-  Input(gathering, "Gathering duration minimum (minutes)", nameof(Instruction.MinimumText));
-  Input(gathering, "Gathering duration maximum (minutes)", nameof(Instruction.MaximumText));
-  Check(gathering, "Reset timer", nameof(Instruction.ResetTimer));
-  detail.Children.Add(gathering);
-
+  var minutesMin = Input(detail, "Minimum minutes", nameof(Instruction.MinimumText));
+  var minutesMax = Input(detail, "Maximum minutes", nameof(Instruction.MaximumText));
+  var gatheringGate = new Binding(nameof(Instruction.Type)) { Converter = new StepTypeEnabledConverter(), ConverterParameter = "Gathering" };
+  minutesMin.SetBinding(TextBox.IsEnabledProperty, gatheringGate);
+  minutesMax.SetBinding(TextBox.IsEnabledProperty, gatheringGate);
   var patrol = Check(detail, "Smart patrol", nameof(Instruction.SmartPatrol));
-  var patrolStyle = new Style(typeof(CheckBox), Application.Current.TryFindResource(typeof(CheckBox)) as Style);
-  patrolStyle.Setters.Add(new Setter(VisibilityProperty, Visibility.Collapsed));
-  var isKinah = new DataTrigger { Binding = new Binding(nameof(Instruction.Type)), Value = InstructionType.KinahFarming };
-  isKinah.Setters.Add(new Setter(VisibilityProperty, Visibility.Visible));
-  patrolStyle.Triggers.Add(isKinah);
-  patrol.Style = patrolStyle;
+  patrol.SetBinding(CheckBox.IsEnabledProperty, new Binding(nameof(Instruction.Type)) { Converter = new StepTypeEnabledConverter(), ConverterParameter = "KinahFarming" });
+  var resetTimer = Check(detail, "Reset timer", nameof(Instruction.ResetTimer));
+  resetTimer.SetBinding(CheckBox.IsEnabledProperty, gatheringGate);
+  detail.Children.Add(PrimaryEditorButton("ApplyDailyWorkflow", "Apply instruction settings", Model.SaveDailyCommand));
+  AddEditorStatus(detail, nameof(MainViewModel.WorkflowEditorStatus));
 
-  var completion = Section(detailColumn, "Gathering & completion");
-  SelectOption(completion, "After all characters finish", "DailyWorkflowCompletion",
+  var completion = Section(root, "After all characters finish", "Choose what happens once every character has completed the sequence.");
+  SelectOption(completion, "Completion", "DailyWorkflowCompletion",
       InstructionPresentation.CompletionOptions.Select(option => (option.Value, option.Label)).ToArray(), "Preferences.AfterFinish");
-  completion.Children.Add(PrimaryEditorButton("ApplyDailyWorkflow", "Apply instruction settings", Model.SaveDailyCommand));
-  AddEditorStatus(completion, nameof(MainViewModel.WorkflowEditorStatus));
 
-  var sequenceControls = Section(sequenceColumn, "Run controls", "Starts or stops the saved task sequence inside the running game — the same commands the in-game menu uses. The game must be running; the sequence follows the instruction order above.");
-  var runRow = new StackPanel { Orientation = Orientation.Horizontal };
+  var workflowFiles = new WrapPanel();
+  workflowFiles.Children.Add(Button("Import workflow", ImportWorkflow));
+  workflowFiles.Children.Add(Button("Export workflow", ExportWorkflow));
+  workflowFiles.Children.Add(Button("Open settings folder", () => Model.OpenConfigurationFolder()));
+  workflowFiles.Children.Add(Button("Load default sequence", () =>
+  {
+   if (MessageBox.Show(this, "Replace the current draft sequence with the default sequence?",
+       "Default workflow", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
+    Model.LoadDefaultWorkflow();
+  }));
+  root.Children.Add(new Expander { Header = "Workflow files and defaults", Content = workflowFiles, Margin = new Thickness(2, 10, 0, 0) });
+
+  var sequenceControls = Section(root, "Run controls", "Starts or stops the saved task sequence inside the running game — the same commands the in-game menu uses. The game must be running; the sequence follows the instruction order above.");
+  var runRow = new WrapPanel { Margin = new Thickness(0, 2, 0, 0) };
   var startSequence = Button("Start sequence", async () => await Model.StartDailySequenceAsync());
   startSequence.Name = "StartDailySequenceButton";
   startSequence.Background = Brush("#6942A8");
+  startSequence.Margin = new Thickness(0, 0, 10, 6);
   runRow.Children.Add(startSequence);
   var stopSequence = Button("Stop", async () => await Model.StopDailySequenceAsync());
   stopSequence.Name = "StopDailySequenceButton";
   stopSequence.Background = Brush("#69284A");
-  stopSequence.Margin = new Thickness(10, 0, 0, 0);
+  stopSequence.Margin = new Thickness(0, 0, 10, 6);
   runRow.Children.Add(stopSequence);
   var applyDefault = Button("Use default config", async () =>
   {
@@ -636,17 +636,17 @@ public sealed class MainWindow : Window
   });
   applyDefault.Name = "ApplyDefaultConfigButton";
   applyDefault.Background = Brush("#6942A8");
-  applyDefault.Margin = new Thickness(10, 0, 0, 0);
+  applyDefault.Margin = new Thickness(0, 0, 10, 6);
   runRow.Children.Add(applyDefault);
   var startGathering = Button("Start gathering", async () => await Model.StartGatheringAsync());
   startGathering.Name = "StartGatheringButton";
   startGathering.Background = Brush("#6942A8");
-  startGathering.Margin = new Thickness(10, 0, 0, 0);
+  startGathering.Margin = new Thickness(0, 0, 10, 6);
   runRow.Children.Add(startGathering);
   var stopGathering = Button("Stop gathering", async () => await Model.StopGatheringAsync());
   stopGathering.Name = "StopGatheringButton";
   stopGathering.Background = Brush("#69284A");
-  stopGathering.Margin = new Thickness(10, 0, 0, 0);
+  stopGathering.Margin = new Thickness(0, 0, 0, 6);
   runRow.Children.Add(stopGathering);
   sequenceControls.Children.Add(runRow);
   var runStatus = Text("", 12, false, "#B9ADCA");

@@ -416,6 +416,50 @@ public sealed class MainViewModel : Observable, IDisposable
     public RelayCommand SaveDailyCommand { get; }
     public RelayCommand SaveScheduleCommand { get; }
     public RelayCommand AddCommand { get; }
+    public RelayCommand AddGatherCommand { get; }
+    public RelayCommand AddKinahCommand { get; }
+    public RelayCommand AddAutoDungeonCommand { get; }
+    public RelayCommand AddKraoCommand { get; }
+    public RelayCommand AddSwitchCommand { get; }
+
+    // Mirrors the vendor editor: a new step of the chosen kind is inserted before the final
+    // Switch Character step; choosing Switch Character simply selects the last step.
+    public void AddInstructionOfType(InstructionType type)
+    {
+        if (type == InstructionType.SwitchCharacter || Preferences.Instructions.Count == 0)
+        {
+            var switchStep = Preferences.Instructions.LastOrDefault(i => i.Type == InstructionType.SwitchCharacter);
+            if (switchStep == null)
+            {
+                switchStep = new Instruction { Type = InstructionType.SwitchCharacter };
+                Preferences.Instructions.Add(switchStep);
+            }
+            SelectedInstruction = switchStep;
+            return;
+        }
+        var step = new Instruction { Type = type };
+        var insertIndex = Math.Max(0, Preferences.Instructions.Count - 1);
+        Preferences.Instructions.Insert(insertIndex, step);
+        SelectedInstruction = step;
+        RenumberInstructions();
+        Status = "Added: " + step.ActivityLabel;
+    }
+
+    public void OpenConfigurationFolder()
+    {
+        var folder = session?.Service.Folder;
+        if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
+        {
+            Status = "No game configuration folder is selected yet. Find settings on the General page first.";
+            return;
+        }
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(folder) { UseShellExecute = true });
+            Status = "Opened the game configuration folder.";
+        }
+        catch (Exception e) { Status = "Could not open the configuration folder (" + e.GetType().Name + ")."; }
+    }
     public RelayCommand DuplicateCommand { get; }
     public RelayCommand DeleteCommand { get; }
     public RelayCommand UpCommand { get; }
@@ -1046,6 +1090,12 @@ public sealed class MainViewModel : Observable, IDisposable
             Changed(nameof(ScheduleEditorStatus));
         });
         AddCommand = new(() => { var step = new Instruction(); Preferences.Instructions.Add(step); SelectedInstruction = step; });
+        // The vendor editor adds a specific kind of step before the final Switch Character step.
+        AddGatherCommand = new(() => AddInstructionOfType(InstructionType.Gathering));
+        AddKinahCommand = new(() => AddInstructionOfType(InstructionType.KinahFarming));
+        AddAutoDungeonCommand = new(() => AddInstructionOfType(InstructionType.AutoQuest));
+        AddKraoCommand = new(() => AddInstructionOfType(InstructionType.AutoKraoDungeon));
+        AddSwitchCommand = new(() => AddInstructionOfType(InstructionType.SwitchCharacter));
         DuplicateCommand = new(() => { if (SelectedInstruction is { } i) { var copy = i.Copy(); Preferences.Instructions.Insert(Preferences.Instructions.IndexOf(i) + 1, copy); SelectedInstruction = copy; } }, () => SelectedInstruction != null);
         DeleteCommand = new(() => { if (SelectedInstruction is { } i) { Preferences.Instructions.Remove(i); SelectedInstruction = Preferences.Instructions.FirstOrDefault(); } }, () => SelectedInstruction != null);
         UpCommand = new(() => Move(-1), () => SelectedInstruction != null && Preferences.Instructions.IndexOf(SelectedInstruction) > 0);
