@@ -38,6 +38,12 @@ internal static class LcRegistryFeatureTests
         check(new GatheringDocument(fixture.Names, edited).WithSelection(0, true) == fixture.Targets, "Edit and reversal restore exact original Unicode text");
         var renamed = new GatheringDocument(fixture.Names.Replace("Hidden Cube", "Updated English name"), fixture.Targets);
         check(renamed.Targets[0].DisplayName == "Updated English name" && renamed.Serialize() == fixture.Targets, "English translation updates cannot change identifiers or selected states");
+        // Built-in fallback: the vendor names lookup can miss entries (observed: 隱藏背包 missing); the
+        // display must use the built-in English name and never the raw CJK identifier.
+        var missingHiddenCube = new GatheringDocument(string.Join("\n", fixture.Names.Split("\r\n").Where(line => !line.StartsWith("隱藏背包", StringComparison.Ordinal))), fixture.Targets);
+        check(missingHiddenCube.Targets[0].DisplayName == "Hidden Cube", "Missing vendor name entries fall back to the built-in English name");
+        var unknownOnly = new GatheringDocument("\n", fixture.Targets + "\r\n1\t未知資源\n");
+        check(unknownOnly.Targets.Last().DisplayName == "Untranslated resource (entry 25)", "Unknown identifiers keep the untranslated fallback and never show raw CJK");
         var reversedNames = string.Join("\n", fixture.Names.Split("\r\n").Reverse());
         check(new GatheringDocument(reversedNames, fixture.Targets).Targets.Select(t => t.Identifier).SequenceEqual(document.Targets.Select(t => t.Identifier)), "Name lookup reordering does not reorder target identities");
         var unusual = fixture.Targets + "\r\n1\t未知資源\n9\t未支援\r\nopaque future data\r\n\rduplicate\n0\t未知資源\r\n";

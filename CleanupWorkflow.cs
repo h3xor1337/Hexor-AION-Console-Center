@@ -51,7 +51,7 @@ public sealed class CleanupWorkflow
     }, cancellationToken);
 
     public Task<CleanupPlan> PreparePathMatchedDxgiAsync(Action<string>? progress=null,CancellationToken cancellationToken=default)=>Task.Run(()=>{progress?.Invoke("Scanning fixed drives for validated AION2 installations");var found=installations.DiscoverOnFixedDrives().DistinctBy(x=>x.InstallationDirectory,StringComparer.OrdinalIgnoreCase);return new CleanupPlan(NormalizeDistinct(found.Select(pathDxgi.Inspect)));},cancellationToken);
-    public Task<CleanupPlan> PrepareUnifiedAsync(Action<string>? progress=null,CancellationToken cancellationToken=default)=>Task.Run(()=>{progress?.Invoke("Scanning fixed drives and updater-owned data");var found=installations.DiscoverOnFixedDrives();var items=found.Select(pathDxgi.Inspect).Concat(updaterData.Inspect());return new CleanupPlan(NormalizeDistinct(items));},cancellationToken);
+    public Task<CleanupPlan> PrepareUnifiedAsync(Action<string>? progress=null,CancellationToken cancellationToken=default)=>Task.Run(()=>{progress?.Invoke("Scanning fixed drives and updater-owned data");var found=installations.DiscoverOnFixedDrives().Concat(installations.DiscoverFromSteamLibraries(installations.ReadSteamLibraries())).DistinctBy(x=>x.InstallationDirectory,StringComparer.OrdinalIgnoreCase);var items=found.Select(pathDxgi.Inspect).Concat(updaterData.Inspect());return new CleanupPlan(NormalizeDistinct(items));},cancellationToken);
 
     // Deliberately separate from PrepareAsync: callers must explicitly request this broader cache reset.
     public Task<CleanupPlan> PrepareCacheResetAsync(Action<string>? progress = null, CancellationToken cancellationToken = default) => Task.Run(() =>

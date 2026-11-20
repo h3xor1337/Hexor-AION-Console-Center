@@ -166,7 +166,7 @@ internal static class Program
      {
       TestCheckpoint.Write("WPF: initial load");await window.InitialLoadCompleted;
       Assert(app.Windows.Count==1&&ReferenceEquals(app.Windows[0],window),"WPF test host opens only the fixture window without customer startup dialogs");
-      for(var i=0;i<10;i++){var tab=i;TestCheckpoint.Run("WPF: initial navigation "+tab,()=>{window.ShowPage(tab);window.UpdateLayout();});Assert(window.Content!=null,"WPF navigation page "+i);}
+      for(var i=0;i<9;i++){var tab=i;TestCheckpoint.Run("WPF: initial navigation "+tab,()=>{window.ShowPage(tab);window.UpdateLayout();});Assert(window.Content!=null,"WPF navigation page "+i);}
       window.ShowPage(1);window.UpdateLayout();
       System.Windows.Controls.RadioButton Radio(string name)=>RuntimeDisplayTests.All<System.Windows.Controls.RadioButton>(window).Single(r=>r.Name==name);
       Assert(Radio("AuctionPriceModeAverage").IsChecked==true,"Auto Auction radio displays the initialized Average registry value");

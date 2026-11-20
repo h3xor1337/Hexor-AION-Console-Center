@@ -229,9 +229,9 @@ internal static class RuntimeDisplayTests
             "Customer window is centered and supports native resize/maximize");
         check(window.MinWidth>=920 && window.MinHeight>=620,"Responsive shell has safe minimum dimensions");
         var nav=Find<StackPanel>(window,"SidebarNavigation")!;
-        var expected=new[]{"General","Resource Grab","Auto Dungeon","Auto Task","Character Enhancement","Daily Activities","Work Schedule","Shugo Festival","CAPTCHA","Live Control"};
+        var expected=new[]{"General","Resource Grab","Auto Dungeon","Auto Task","Character Enhancement","Daily Activities","Work Schedule","Shugo Festival","CAPTCHA"};// Live Control is hidden for now.
         check(nav.Children.Count==expected.Length && nav.Children.Cast<Button>().SelectMany(b=>All<TextBlock>(b)).Select(t=>t.Text)
-            .SequenceEqual(expected),"Customer navigation includes both LegionCommander editors and live control");
+            .SequenceEqual(expected),"Customer navigation covers the LegionCommander editors");
         check(nav.Children.Cast<Button>().SelectMany(b=>All<TextBlock>(b)).All(t=>t.TextWrapping==TextWrapping.NoWrap),"Sidebar navigation labels remain on one line");
         var ids=vm.Preferences.Instructions.Select(i=>i.Id).ToArray();
         var workflow=System.Text.Json.JsonSerializer.Serialize(vm.Preferences.Instructions);

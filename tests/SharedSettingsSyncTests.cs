@@ -135,6 +135,34 @@ internal static class SharedSettingsSyncTests
                 && gatherValues["qualityFilterLevel"]!.GetValue<int>() == 1,
                 "gather.json mirrors the vendor flag\tidentifier targets and the names lookup");
 
+            // Wipe recovery: the vendor updater deletes registry values during installs and the game
+            // can persist an empty filter. The reconcile must rebuild the saved list from the shared
+            // document instead of publishing an empty list to the game.
+            using (var key = Registry.CurrentUser.OpenSubKey(branch + "\\ResourceGrab", true)) key!.DeleteValue("GatherTargets", false);
+            check(LegionSharedSettings.SyncGroup(shared, "gather", branch), "Sync succeeds after the registry targets value is wiped");
+            using (var key = Registry.CurrentUser.OpenSubKey(branch + "\\ResourceGrab"))
+                check(key!.GetValue("GatherTargets", null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string == "1\t奧德\n0\t紅寶石",
+                    "A wiped registry gather list is restored from the shared document");
+            var restoredGather = JsonNode.Parse(File.ReadAllText(gatherPath))!.AsObject();
+            check((restoredGather["values"]!["targets"] as JsonArray)!.Count == 2, "The shared document keeps the full gather list through the wipe");
+
+            using (var key = Registry.CurrentUser.OpenSubKey(branch + "\\ResourceGrab", true)) key!.SetValue("GatherTargets", "", RegistryValueKind.String);
+            check(LegionSharedSettings.SyncGroup(shared, "gather", branch), "Sync succeeds after the registry targets value is emptied");
+            using (var key = Registry.CurrentUser.OpenSubKey(branch + "\\ResourceGrab"))
+                check(key!.GetValue("GatherTargets", null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string == "1\t奧德\n0\t紅寶石",
+                    "An emptied registry gather list is restored from the shared document");
+
+            // Never fabricate: with no saved list anywhere (no registry value, no document targets),
+            // the reconcile must not invent resource entries.
+            using (var key = Registry.CurrentUser.OpenSubKey(branch + "\\ResourceGrab", true)) key!.DeleteValue("GatherTargets", false);
+            var withoutTargets = JsonNode.Parse(File.ReadAllText(gatherPath))!.AsObject();
+            (withoutTargets["values"]!.AsObject())["targets"] = new JsonArray();
+            File.WriteAllText(gatherPath, withoutTargets.ToJsonString());
+            check(LegionSharedSettings.SyncGroup(shared, "gather", branch), "Sync succeeds with no saved list anywhere");
+            using (var key = Registry.CurrentUser.OpenSubKey(branch + "\\ResourceGrab"))
+                check(key!.GetValue("GatherTargets", null, RegistryValueOptions.DoNotExpandEnvironmentNames) is null,
+                    "No gather list is fabricated when none was ever saved");
+
             Registry.CurrentUser.DeleteSubKeyTree(branch, false);
         }
         finally

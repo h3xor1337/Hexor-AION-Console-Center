@@ -35,6 +35,38 @@ public static class GatheringDefaults
         ("珂尼玳", false), ("秋葵", false), ("世界樹", true), ("波齊鯉", false),
     ];
 
+    // Built-in English fallback for the vendor's resource identifiers: the saved GatherTargetNames
+    // lookup is written by the vendor console and can miss entries (observed: 隱藏背包 missing while
+    // the game's saved targets still reference it), which left customers looking at raw CJK names.
+    // English never falls back to the raw CJK identifier.
+    public static readonly IReadOnlyDictionary<string, string> EnglishNames = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["隱藏背包"] = "Hidden Cube",
+        ["主神痕跡"] = "Empyrean Trace",
+        ["奧德"] = "Odyle",
+        ["紅寶石"] = "Ruby",
+        ["藍寶石"] = "Sapphire",
+        ["鑽石"] = "Diamond",
+        ["奧里哈康"] = "Orichalcum",
+        ["雪莉"] = "Inina",
+        ["梅拉"] = "Mela",
+        ["雲芝"] = "Coriolus",
+        ["龍蒿"] = "Targena",
+        ["當歸"] = "Aria",
+        ["齊爾利"] = "Cypri",
+        ["庫庫羅"] = "Kukuru",
+        ["天涯草"] = "Azpha",
+        ["菩提"] = "Asvata",
+        ["麻痺草"] = "Paralyzing Herb",
+        ["金盞花"] = "Calendula",
+        ["魔爾菇"] = "Morfa",
+        ["萊森樹莓"] = "Raydam",
+        ["珂尼玳"] = "Conide",
+        ["秋葵"] = "Ohkra",
+        ["世界樹"] = "Yggdrasil",
+        ["波齊鯉"] = "Pujery",
+    };
+
     // Vendor REG_SZ format: "1\t<identifier>" per line.
     public static string TargetsText() => string.Join("\n", Entries.Select(entry => (entry.Enabled ? "1" : "0") + "\t" + entry.Identifier));
 }
@@ -73,7 +105,9 @@ public sealed class GatheringDocument
             var id = text[2..];
             bool? enabled = text[0] switch { '0' => false, '1' => true, _ => null };
             if (enabled == null) unrecognized++;
-            var label = translations.TryGetValue(id, out var translated) ? translated : $"Untranslated resource (entry {entries.Count + 1})";
+            var label = translations.TryGetValue(id, out var translated) ? translated
+                : GatheringDefaults.EnglishNames.TryGetValue(id, out var builtin) ? builtin
+                : $"Untranslated resource (entry {entries.Count + 1})";
             entries.Add(new(index, id, label, enabled));
         }
         Targets = entries.AsReadOnly();
