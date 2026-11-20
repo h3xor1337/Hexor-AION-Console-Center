@@ -6,7 +6,7 @@ public static class InstructionPresentation
 {
     public static IReadOnlyList<InstructionOption> Options { get; } = [
         new(InstructionType.Gathering,"Gathering"), new(InstructionType.KinahFarming,"Kinah Farming"),
-        new(InstructionType.AutoQuest,"Auto Quest"), new(InstructionType.AutoKraoDungeon,"Auto Krao Dungeon"),
+        new(InstructionType.AutoQuest,"Auto Dungeon"), new(InstructionType.AutoKraoDungeon,"Auto Krao Dungeon"),
         new(InstructionType.SwitchCharacter,"Switch Character")];
     public static IReadOnlyList<CompletionOption> CompletionOptions { get; } = [
         new("GatherOnCharacter","Gather on current character"), new("NextAccount","Move to next account")];

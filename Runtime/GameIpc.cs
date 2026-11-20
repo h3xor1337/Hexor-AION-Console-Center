@@ -3,6 +3,7 @@ using System.IO;
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace Hexor.Runtime;
 
@@ -179,6 +180,74 @@ public sealed class GameIpcService : IDisposable
         SendAsync(GameIpcMessageType.Command, Encoding.UTF8.GetBytes(
             JsonSerializer.Serialize(new Dictionary<string, object?> { ["command"] = command, ["args"] = args ?? new { } }, JsonOptions.Default)));
 
+    // Runtime RPC: the same RuntimeRequest/RuntimeResponse frames the vendor console sends over
+    // this pipe. The in-game runtime serves method calls (commander.command among them), which
+    // is how the vendor console starts and stops the daily activity machines. Requests are
+    // correlated by requestId; responses arrive as RuntimeResponse frames.
+    private readonly Dictionary<string, TaskCompletionSource<JsonElement>> runtimeCalls = new();
+    private int runtimeCallLeak;
+    // The in-game runtime requires a stable session id per connection; the vendor console uses
+    // one generated id per account session. Hexor keeps one per pipe connection.
+    private string runtimeSessionId = Guid.NewGuid().ToString("N");
+
+    public async Task<JsonElement> SendRuntimeRequestAsync(string method, object? parameters, TimeSpan? timeout = null, CancellationToken? stop = null)
+    {
+        var stream = server;
+        if (stream == null || !stream.IsConnected || !clientConnected)
+            throw new IOException("No in-game client connected for a runtime request.");
+        var requestId = Guid.NewGuid().ToString("N");
+        var source = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (gate) runtimeCalls[requestId] = source;
+        try
+        {
+            var budget = timeout ?? TimeSpan.FromSeconds(10);
+            var payload = JsonSerializer.Serialize(new Dictionary<string, object?>
+            {
+                ["protocolVersion"] = 1,
+                ["requestId"] = requestId,
+                ["runtimeSessionId"] = runtimeSessionId,
+                ["method"] = method,
+                ["params"] = parameters ?? new { },
+                ["deadlineUnixMs"] = DateTimeOffset.UtcNow.Add(budget).ToUnixTimeMilliseconds(),
+                ["processId"] = ProcessId,
+            }, JsonOptions.Default);
+            await SendAsync(GameIpcMessageType.RuntimeRequest, Encoding.UTF8.GetBytes(payload)).ConfigureAwait(false);
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(stop ?? CancellationToken.None);
+            linked.CancelAfter(budget);
+            await using (linked.Token.Register(() => source.TrySetCanceled(linked.Token)))
+                return await source.Task.ConfigureAwait(false);
+        }
+        finally { lock (gate) runtimeCalls.Remove(requestId); }
+    }
+
+    private void CompleteRuntimeResponse(byte[] payload)
+    {
+        try
+        {
+            var response = JsonSerializer.Deserialize<JsonObject>(payload, JsonOptions.Default);
+            var requestId = response?["requestId"]?.GetValue<string>();
+            if (string.IsNullOrEmpty(requestId)) return;
+            TaskCompletionSource<JsonElement>? source;
+            lock (gate) runtimeCalls.TryGetValue(requestId, out source);
+            if (source == null) return;
+            var status = response["status"]?.GetValue<string>();
+            var result = response["result"];
+            if (string.Equals(status, "ok", StringComparison.OrdinalIgnoreCase) && result is JsonNode && !result.ToString().Equals("null", StringComparison.Ordinal))
+                source.TrySetResult(JsonSerializer.SerializeToElement(result, JsonOptions.Default));
+            else
+            {
+                var message = response["error"] is JsonObject error
+                    ? error["message"]?.GetValue<string>() ?? "runtime error"
+                    : status ?? "runtime error";
+                source.TrySetException(new IOException("Runtime request failed: " + message));
+            }
+        }
+        catch (Exception e) when (e is JsonException or InvalidOperationException)
+        {
+            if (Interlocked.Increment(ref runtimeCallLeak) < 5) OnLog?.Invoke("runtime response parse failed: " + e.Message);
+        }
+    }
+
     private async Task LoopAsync(CancellationToken stop)
     {
         OnLog?.Invoke("loop started");
@@ -219,6 +288,7 @@ public sealed class GameIpcService : IDisposable
                     }
                     var payload = length == 0 ? Array.Empty<byte>() : new byte[length];
                     if (length > 0 && !await ReadExactlyAsync(stream, payload, stop).ConfigureAwait(false)) break;
+                    if (type == GameIpcMessageType.RuntimeResponse) CompleteRuntimeResponse(payload);
                     OnMessage?.Invoke(type, payload);
                 }
             }
@@ -348,6 +418,16 @@ public sealed class GameIpcManager : IDisposable
         if (service == null || !service.PipeOwnedByHexor || !service.ClientConnected)
             throw new IOException($"No direct game IPC connection for PID {processId}.");
         await service.SendCommandAsync(command, args).ConfigureAwait(false);
+    }
+
+    // Runtime RPC pass-through to the per-PID pipe the manager hosts for this game process.
+    public async Task<JsonElement> SendRuntimeRequestAsync(int processId, string method, object? parameters, TimeSpan? timeout = null, CancellationToken? stop = null)
+    {
+        GameIpcService? service;
+        lock (gate) services.TryGetValue(processId, out service);
+        if (service == null || !service.PipeOwnedByHexor || !service.ClientConnected)
+            throw new IOException($"No direct game IPC connection for PID {processId}.");
+        return await service.SendRuntimeRequestAsync(method, parameters, timeout, stop).ConfigureAwait(false);
     }
 
     private async Task WatchAsync(CancellationToken stop)

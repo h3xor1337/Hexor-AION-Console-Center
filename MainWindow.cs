@@ -530,9 +530,11 @@ public sealed class MainWindow : Window
  private void DailyActivities(StackPanel root)
  {
   var workspace = new Grid();
-  workspace.ColumnDefinitions.Add(new ColumnDefinition());
+  // The sequence column needs less width than the settings column: balance the two so the
+  // left side does not leave a large empty area under the instruction card.
+  workspace.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(4, GridUnitType.Star) });
   workspace.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(14) });
-  workspace.ColumnDefinitions.Add(new ColumnDefinition());
+  workspace.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(6, GridUnitType.Star) });
   root.Children.Add(workspace);
   var sequenceColumn = new StackPanel();
   var detailColumn = new StackPanel();
@@ -544,7 +546,7 @@ public sealed class MainWindow : Window
   var notice = Text("", 12, false, "#B9ADCA");
   notice.SetBinding(TextBlock.TextProperty, nameof(MainViewModel.WorkflowNotice));
   sequence.Children.Add(notice);
-  var steps = new ListBox { Name = "DailyWorkflowSteps", MinHeight = 100, MaxHeight = 250,
+  var steps = new ListBox { Name = "DailyWorkflowSteps", MinHeight = 140, MaxHeight = 420,
       Style = (Style)FindResource("WorkflowListStyle") };
   ScrollViewer.SetHorizontalScrollBarVisibility(steps, ScrollBarVisibility.Disabled);
   AutomationProperties.SetName(steps, T("Instruction sequence"));

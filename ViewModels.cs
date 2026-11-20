@@ -723,6 +723,56 @@ public sealed class MainViewModel : Observable, IDisposable
     public GameSessionSnapshot? ConnectedGameSession() =>
         gameIpc.Sessions().FirstOrDefault(s => s.ClientConnected && s.PipeOwnedByHexor);
 
+    // Sequence runner following the vendor algorithm: the vendor console drives the daily
+    // workflow with runtime commands (commander.command), one call per activity step, using the
+    // same targets and arguments. Only explicit operator actions start or stop the sequence.
+    private CancellationTokenSource? sequenceRun;
+    private int sequencePid;
+    private ulong sequenceLuaVmGeneration;
+
+    private static (string Target, string Label) StepTarget(InstructionType type) => type switch
+    {
+        InstructionType.AutoQuest => ("auto_task", "Auto Dungeon"),
+        InstructionType.AutoKraoDungeon => ("krao_dungeon", "Auto Krao Dungeon"),
+        InstructionType.KinahFarming => ("combat", "Kinah Farming"),
+        InstructionType.Gathering => ("gather", "Gathering"),
+        _ => ("combat", "Switch Character"),
+    };
+
+    private async Task<JsonElement> CommanderCommandAsync(int processId, string operation, object? arguments)
+    {
+        // Keys match the vendor console's serialization exactly (Newtonsoft default keeps
+        // PascalCase): Operation / Arguments / CommandId / ExpectedLuaVmGeneration.
+        return await gameIpc.SendRuntimeRequestAsync(processId, "commander.command", new Dictionary<string, object?>
+        {
+            ["Operation"] = operation,
+            ["Arguments"] = arguments ?? new { },
+            ["CommandId"] = Guid.NewGuid().ToString("N"),
+            ["ExpectedLuaVmGeneration"] = sequenceLuaVmGeneration,
+        }).ConfigureAwait(false);
+    }
+
+    private async Task<ulong> ReadLuaVmGenerationAsync(int processId)
+    {
+        var snapshot = await gameIpc.SendRuntimeRequestAsync(processId, "commander.snapshot", new { }).ConfigureAwait(false);
+        if (snapshot.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var name in new[] { "LuaVmGeneration", "luaVmGeneration", "luaVMGeneration", "LuaVMGeneration" })
+                if (snapshot.TryGetProperty(name, out var node) && node.ValueKind is JsonValueKind.Number)
+                    return node.GetUInt64();
+        }
+        return 0;
+    }
+
+    private async Task StopActivityAsync(int processId, string reason)
+    {
+        try { await CommanderCommandAsync(processId, "stop", new Dictionary<string, object?> { ["Reason"] = reason }).ConfigureAwait(false); }
+        catch (Exception e) { Diagnostics.Log("daily-sequence", "runtime-stop-failed; type=" + e.GetType().Name); }
+        // Belt and braces: the plain pipe stop clears the gather/combat/dungeon machines too.
+        try { await gameIpc.SendCommandAsync(processId, "StopAll").ConfigureAwait(false); }
+        catch (Exception e) { Diagnostics.Log("daily-sequence", "pipe-stop-failed; type=" + e.GetType().Name); }
+    }
+
     public async Task StartDailySequenceAsync()
     {
         var session = ConnectedGameSession();
@@ -731,29 +781,86 @@ public sealed class MainViewModel : Observable, IDisposable
             Status = "Start AION2 first — the task sequence runs inside the game.";
             return;
         }
+        if (sequenceRun != null) { Status = "The sequence is already running; press Stop first."; return; }
+        var steps = Preferences.Instructions.Where(i => i.Enabled && i.Type != InstructionType.SwitchCharacter).ToList();
+        if (steps.Count == 0) { Status = "Enable at least one instruction before starting the sequence."; return; }
         try
         {
-            await gameIpc.SendCommandAsync(session.ProcessId, "StartAutoTask");
-            Status = $"Task sequence started for the game session on PID {session.ProcessId}.";
-            Diagnostics.Log("daily-sequence", "started; pid=" + session.ProcessId);
+            sequenceLuaVmGeneration = await ReadLuaVmGenerationAsync(session.ProcessId);
+            var run = new CancellationTokenSource();
+            sequenceRun = run; sequencePid = session.ProcessId;
+            Diagnostics.Log("daily-sequence", "started; pid=" + session.ProcessId + "; steps=" + steps.Count + "; luaVm=" + sequenceLuaVmGeneration);
+            Status = "Sequence starting…";
+            _ = RunSequenceAsync(steps, session.ProcessId, run.Token);
         }
-        catch (Exception e) { Status = $"Starting the task sequence failed ({e.GetType().Name})."; Diagnostics.Log("daily-sequence", "start-failed; type=" + e.GetType().Name); }
-        RebuildGameIpcUi();
+        catch (Exception e)
+        {
+            Status = "The game did not accept the sequence start (" + e.GetType().Name + ").";
+            Diagnostics.Log("daily-sequence", "start-failed; type=" + e.GetType().Name);
+        }
+        await Task.CompletedTask;
+    }
+
+    private async Task RunSequenceAsync(List<Instruction> steps, int processId, CancellationToken token)
+    {
+        try
+        {
+            // The vendor clears any previous activity, then starts each enabled step in order and
+            // gives it its configured duration before moving on.
+            await StopActivityAsync(processId, "sequence start");
+            await Task.Delay(500, token);
+            var hasFloorGold = steps.Any(s => s.Type == InstructionType.KinahFarming);
+            for (var index = 0; index < steps.Count; index++)
+            {
+                token.ThrowIfCancellationRequested();
+                var step = steps[index];
+                var (target, label) = StepTarget(step.Type);
+                var arguments = new Dictionary<string, object?>
+                {
+                    ["SmartPatrol"] = step.SmartPatrol,
+                    ["GoldTargetPermille"] = 0,
+                    ["QueueFloorGold"] = hasFloorGold,
+                    ["QueueFloorGoldSmartPatrol"] = steps.FirstOrDefault(s => s.Type == InstructionType.KinahFarming)?.SmartPatrol ?? false,
+                };
+                await CommanderCommandAsync(processId, target, arguments);
+                Status = $"Sequence: {label} started ({index + 1} of {steps.Count}).";
+                Diagnostics.Log("daily-sequence", $"step; pid={processId}; label={label}; target={target}");
+                RebuildGameIpcUi();
+                var minutes = Math.Clamp(step.MinimumMinutes > 0 ? step.MinimumMinutes : 1, 1, 10080);
+                await Task.Delay(TimeSpan.FromMinutes(minutes), token);
+                if (index < steps.Count - 1)
+                {
+                    await StopActivityAsync(processId, "next step");
+                    await Task.Delay(500, token);
+                }
+            }
+            await StopActivityAsync(processId, "sequence finished");
+            Status = "Sequence finished.";
+            Diagnostics.Log("daily-sequence", "completed; pid=" + processId);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception e)
+        {
+            Status = $"The sequence stopped early ({e.GetType().Name}).";
+            Diagnostics.Log("daily-sequence", "sequence-failed; type=" + e.GetType().Name);
+        }
+        finally { sequenceRun = null; RebuildGameIpcUi(); }
     }
 
     public async Task StopDailySequenceAsync()
     {
         var session = ConnectedGameSession();
-        if (session == null)
+        if (session == null && sequenceRun == null)
         {
             Status = "No connected game session — nothing to stop.";
             return;
         }
         try
         {
-            await gameIpc.SendCommandAsync(session.ProcessId, "StopAll");
-            Status = $"Task sequence stopped for the game session on PID {session.ProcessId}.";
-            Diagnostics.Log("daily-sequence", "stopped; pid=" + session.ProcessId);
+            sequenceRun?.Cancel();
+            if (session != null) await StopActivityAsync(session.ProcessId, "stop requested");
+            Status = $"Task sequence stopped for the game session on PID {session?.ProcessId ?? sequencePid}.";
+            Diagnostics.Log("daily-sequence", "stopped; pid=" + (session?.ProcessId ?? sequencePid));
         }
         catch (Exception e) { Status = $"Stopping the task sequence failed ({e.GetType().Name})."; Diagnostics.Log("daily-sequence", "stop-failed; type=" + e.GetType().Name); }
         RebuildGameIpcUi();

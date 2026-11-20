@@ -325,7 +325,7 @@ internal static class RuntimeDisplayTests
         check(vm.Preferences.Instructions.Select(i=>i.Id).SequenceEqual(ids) && System.Text.Json.JsonSerializer.Serialize(vm.Preferences.Instructions)==workflow,
             "Four-tab navigation never deletes or rewrites retained workflow data");
         check(!workflow.Contains("SequenceNumber"),"Retained workflow row numbering stays presentation-only");
-        check(InstructionPresentation.Options.Select(o=>o.Label).SequenceEqual(new[]{"Gathering","Kinah Farming","Auto Quest","Auto Krao Dungeon","Switch Character"}),"Retained workflow labels remain available to existing model consumers");
+        check(InstructionPresentation.Options.Select(o=>o.Label).SequenceEqual(new[]{"Gathering","Kinah Farming","Auto Dungeon","Auto Krao Dungeon","Switch Character"}),"Retained workflow labels remain available to existing model consumers");
         Navigate(window,0,"general");
         check(!All<TextBox>(window).Any(box=>BindingOperations.GetBinding(box,TextBox.TextProperty)?.Path.Path is "GamePathTw" or "GamePathKr" or "GamePathGlobal")
             && !All<TextBlock>(window).Any(text=>text.Text is "Taiwan game path" or "Korean game path" or "Global game path")
