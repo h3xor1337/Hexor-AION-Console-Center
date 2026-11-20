@@ -19,17 +19,31 @@ public sealed class Instruction : Observable
  private bool enabled=true; private InstructionType type;
  public bool Enabled {get=>enabled;set=>Set(ref enabled,value);}
  public InstructionType Type { get => type; set { if (Set(ref type, value)) Changed(nameof(ActivityLabel)); } }
- [JsonIgnore]public string ActivityLabel => InstructionPresentation.Options.FirstOrDefault(option => option.Value == Type)?.Label ?? Type.ToString();
+ // Step labels follow the vendor editor's wording: kind plus its behavior summary.
+ [JsonIgnore]public string ActivityLabel => Type switch
+ {
+  InstructionType.Gathering => (ResetTimer ? "Fresh gathering" : "Gathering") + $" ({MinimumMinutes.ToString(System.Globalization.CultureInfo.InvariantCulture)}–{MaximumMinutes.ToString(System.Globalization.CultureInfo.InvariantCulture)} min)",
+  InstructionType.KinahFarming => "Kinah farming · daily random 93.0%–99.0%" + (SmartPatrol ? " · smart patrol" : ""),
+  InstructionType.AutoQuest => "Auto Dungeon · continues after all tasks finish",
+  InstructionType.AutoKraoDungeon => "Auto Krao Dungeon · continues when battle power or Od energy runs out",
+  _ => "Switch to the next character",
+ };
  private int sequenceNumber;
  [JsonIgnore]public int SequenceNumber {get=>sequenceNumber;set=>Set(ref sequenceNumber,value);}
  public int DurationMinutes {get;set;}=30;
  public string Id {get;set;}=Guid.NewGuid().ToString("N");
- public int MinimumMinutes {get;set;}=180;
- public int MaximumMinutes {get;set;}=300;
- public bool SmartPatrol {get;set;}=true;
- public bool ResetTimer {get;set;}
- [JsonIgnore]public string MinimumText {get;set;}="180";
- [JsonIgnore]public string MaximumText {get;set;}="300";
+ int minimumMinutes=180;
+ public int MinimumMinutes { get=>minimumMinutes; set { if (Set(ref minimumMinutes, value)) Changed(nameof(ActivityLabel)); } }
+ int maximumMinutes=300;
+ public int MaximumMinutes { get=>maximumMinutes; set { if (Set(ref maximumMinutes, value)) Changed(nameof(ActivityLabel)); } }
+ bool smartPatrol=true;
+ public bool SmartPatrol { get=>smartPatrol; set { if (Set(ref smartPatrol, value)) Changed(nameof(ActivityLabel)); } }
+ bool resetTimer;
+ public bool ResetTimer { get=>resetTimer; set { if (Set(ref resetTimer, value)) Changed(nameof(ActivityLabel)); } }
+ string minimumText="180";
+ [JsonIgnore]public string MinimumText { get=>minimumText; set { if (Set(ref minimumText, value)) Changed(nameof(ActivityLabel)); } }
+ string maximumText="300";
+ [JsonIgnore]public string MaximumText { get=>maximumText; set { if (Set(ref maximumText, value)) Changed(nameof(ActivityLabel)); } }
  [JsonIgnore]public System.Text.Json.Nodes.JsonObject? CompatibleFields {get;set;}
  [JsonExtensionData]public Dictionary<string,JsonElement>? Extra {get;set;}
  public Instruction Copy()=>new(){Enabled=Enabled,Type=Type,DurationMinutes=DurationMinutes,MinimumMinutes=MinimumMinutes,MaximumMinutes=MaximumMinutes,MinimumText=MinimumText,MaximumText=MaximumText,SmartPatrol=SmartPatrol,ResetTimer=ResetTimer,CompatibleFields=(System.Text.Json.Nodes.JsonObject?)CompatibleFields?.DeepClone(),Extra=Extra?.ToDictionary(p=>p.Key,p=>p.Value.Clone())};

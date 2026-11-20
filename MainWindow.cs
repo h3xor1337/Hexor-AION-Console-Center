@@ -617,7 +617,7 @@ public sealed class MainWindow : Window
   completion.Children.Add(PrimaryEditorButton("ApplyDailyWorkflow", "Apply instruction settings", Model.SaveDailyCommand));
   AddEditorStatus(completion, nameof(MainViewModel.WorkflowEditorStatus));
 
-  var sequenceControls = Section(detailColumn, "Run controls", "Starts or stops the saved task sequence inside the running game — the same commands the in-game menu uses. The game must be running; the sequence follows the instruction order above.");
+  var sequenceControls = Section(sequenceColumn, "Run controls", "Starts or stops the saved task sequence inside the running game — the same commands the in-game menu uses. The game must be running; the sequence follows the instruction order above.");
   var runRow = new StackPanel { Orientation = Orientation.Horizontal };
   var startSequence = Button("Start sequence", async () => await Model.StartDailySequenceAsync());
   startSequence.Name = "StartDailySequenceButton";

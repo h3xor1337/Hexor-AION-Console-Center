@@ -739,6 +739,19 @@ public sealed class MainViewModel : Observable, IDisposable
         _ => ("combat", "Switch Character"),
     };
 
+    private string DescribeCommandResult(JsonElement result)
+    {
+        try
+        {
+            if (result.ValueKind != JsonValueKind.Object) return string.Empty;
+            var status = result.TryGetProperty("Status", out var st) && st.ValueKind == JsonValueKind.String ? st.GetString() : null;
+            var error = result.TryGetProperty("Error", out var err) && err.ValueKind == JsonValueKind.String ? err.GetString() : null;
+            if (!string.IsNullOrWhiteSpace(error)) return "status=" + status + "; error=" + error;
+            return "status=" + status;
+        }
+        catch { return string.Empty; }
+    }
+
     private async Task<JsonElement> CommanderCommandAsync(int processId, string operation, object? arguments)
     {
         // Keys match the vendor console's serialization exactly (Newtonsoft default keeps
@@ -750,6 +763,22 @@ public sealed class MainViewModel : Observable, IDisposable
             ["CommandId"] = Guid.NewGuid().ToString("N"),
             ["ExpectedLuaVmGeneration"] = sequenceLuaVmGeneration,
         }).ConfigureAwait(false);
+    }
+
+    // The vendor allocates each character's daily floor-gold target as a random 93.0%-99.0%
+    // share of the daily kinah limit (RandomNumberGenerator.GetInt32(930, 991)) and reuses it
+    // for the whole game day. Hexor keeps the same rule per (character, day) in memory.
+    private readonly Dictionary<string, int> goldTargetPermille = new();
+    private int DailyGoldTargetPermille(string characterName)
+    {
+        var key = characterName + "|" + DateTimeOffset.Now.ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture);
+        if (!goldTargetPermille.TryGetValue(key, out var permille))
+        {
+            permille = Random.Shared.Next(930, 991);
+            goldTargetPermille[key] = permille;
+            Diagnostics.Log("daily-sequence", "gold-target-allocated; character=" + characterName + "; permille=" + permille);
+        }
+        return permille;
     }
 
     private async Task<ulong> ReadLuaVmGenerationAsync(int processId)
@@ -815,16 +844,22 @@ public sealed class MainViewModel : Observable, IDisposable
                 token.ThrowIfCancellationRequested();
                 var step = steps[index];
                 var (target, label) = StepTarget(step.Type);
+                var fresh = gameIpc.Sessions().FirstOrDefault(s => s.ProcessId == processId && s.ClientConnected && s.PipeOwnedByHexor);
                 var arguments = new Dictionary<string, object?>
                 {
                     ["SmartPatrol"] = step.SmartPatrol,
-                    ["GoldTargetPermille"] = 0,
+                    ["GoldTargetPermille"] = DailyGoldTargetPermille(string.IsNullOrWhiteSpace(fresh?.Name) ? "character" : fresh.Name),
                     ["QueueFloorGold"] = hasFloorGold,
                     ["QueueFloorGoldSmartPatrol"] = steps.FirstOrDefault(s => s.Type == InstructionType.KinahFarming)?.SmartPatrol ?? false,
                 };
-                await CommanderCommandAsync(processId, target, arguments);
+                var started = await CommanderCommandAsync(processId, target, arguments);
+                var detail = DescribeCommandResult(started);
                 Status = $"Sequence: {label} started ({index + 1} of {steps.Count}).";
-                Diagnostics.Log("daily-sequence", $"step; pid={processId}; label={label}; target={target}");
+                Diagnostics.Log("daily-sequence", $"step; pid={processId}; label={label}; target={target}; {detail}");
+                if (detail.Contains("status=failed", StringComparison.Ordinal))
+                {
+                    Status = $"The {label} step was rejected by the game. {detail}";
+                }
                 RebuildGameIpcUi();
                 var minutes = Math.Clamp(step.MinimumMinutes > 0 ? step.MinimumMinutes : 1, 1, 10080);
                 await Task.Delay(TimeSpan.FromMinutes(minutes), token);

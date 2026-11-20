@@ -9,5 +9,5 @@ public static class InstructionPresentation
         new(InstructionType.AutoQuest,"Auto Dungeon"), new(InstructionType.AutoKraoDungeon,"Auto Krao Dungeon"),
         new(InstructionType.SwitchCharacter,"Switch Character")];
     public static IReadOnlyList<CompletionOption> CompletionOptions { get; } = [
-        new("GatherOnCharacter","Gather on current character"), new("NextAccount","Move to next account")];
+        new("GatherOnCharacter","Start gathering"), new("NextAccount","Close the game")];
 }
