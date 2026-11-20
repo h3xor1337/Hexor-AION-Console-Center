@@ -13,6 +13,7 @@ public sealed class UpdateAvailableDialog : Window
     readonly Button updateNow = Button("Update Now", "#7849B5");
     readonly Button later = Button("Later", "#302442");
     readonly Func<UpdateAvailableDialog, Task> beginUpdate;
+    readonly bool forced;
     bool running;
     bool completed;
 
@@ -23,11 +24,12 @@ public sealed class UpdateAvailableDialog : Window
     }
     internal void CompleteAndClose() { completed = true; Close(); }
 
-    public UpdateAvailableDialog(string installedVersion, Manifest release, Func<UpdateAvailableDialog, Task> beginUpdate)
+    // forced=true: the update installs without asking (startup check or periodic check while
+    // the console is open). The dialog keeps progress and failure reporting, but there is no
+    // opt-out; the updater relaunches the console when the install finishes.
+    public UpdateAvailableDialog(string installedVersion, Manifest release, Func<UpdateAvailableDialog, Task> beginUpdate, bool forced = false)
     {
-        this.beginUpdate = beginUpdate;
-        Title = "Hexor Update Available"; Width = 610; SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner; WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent;
+        this.beginUpdate = beginUpdate; this.forced = forced;
         Title = "Hexor Update Available"; Width = 640; SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterOwner; WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent;
         // Elevation reads through layered shadow, not a heavier border; the border stays for structure.
@@ -48,10 +50,17 @@ public sealed class UpdateAvailableDialog : Window
         root.Children.Add(size); root.Children.Add(progress); root.Children.Add(stage); root.Children.Add(detail);
         var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new(0, 20, 0, 0) };
         updateNow.Name = "UpdateNowButton"; updateNow.IsDefault = true; later.Name = "UpdateLaterButton"; later.IsCancel = true;
-        actions.Children.Add(later); actions.Children.Add(updateNow); root.Children.Add(actions);
+        if (forced)
+        {
+            // No opt-out: Later is not offered, and Update Now stays hidden until a failure needs a Retry.
+            updateNow.Visibility = Visibility.Collapsed;
+            actions.Children.Add(updateNow);
+        }
+        else { actions.Children.Add(later); actions.Children.Add(updateNow); }
+        root.Children.Add(actions);
         later.Click += (_, _) => Close(); updateNow.Click += async (_, _) => await StartUpdate();
         // Keyboard entry point and a short, restrained enter motion (skipped when animations are off).
-        Loaded += (_, _) => { updateNow.Focus(); if (SystemParameters.ClientAreaAnimation) { var fade = new System.Windows.Media.Animation.DoubleAnimation(0, 1, System.Windows.Duration.Automatic) { Duration = TimeSpan.FromMilliseconds(150), EasingFunction = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut } }; var slide = new System.Windows.Media.Animation.ThicknessAnimation { From = new Thickness(0, 14, 0, 0), To = new Thickness(0), Duration = TimeSpan.FromMilliseconds(150), EasingFunction = fade.EasingFunction }; BeginAnimation(OpacityProperty, fade); shell.BeginAnimation(MarginProperty, slide); } };
+        Loaded += async (_, _) => { updateNow.Focus(); if (SystemParameters.ClientAreaAnimation) { var fade = new System.Windows.Media.Animation.DoubleAnimation(0, 1, System.Windows.Duration.Automatic) { Duration = TimeSpan.FromMilliseconds(150), EasingFunction = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut } }; var slide = new System.Windows.Media.Animation.ThicknessAnimation { From = new Thickness(0, 14, 0, 0), To = new Thickness(0), Duration = TimeSpan.FromMilliseconds(150), EasingFunction = fade.EasingFunction }; BeginAnimation(OpacityProperty, fade); shell.BeginAnimation(MarginProperty, slide); } if (forced) await StartUpdate(); };
     }
 
     // Changelog lines arrive as lightweight markdown ("#", "##", "- " bullets). Render them as a
@@ -104,6 +113,7 @@ public sealed class UpdateAvailableDialog : Window
     {
         running = false; progress.IsIndeterminate = false; progress.Value = 0; stage.Text = heading;
         detail.Text = message + " The current Hexor installation was not replaced. Check your connection or permissions, then retry.";
+        if (forced) updateNow.Visibility = Visibility.Visible; // a forced install that failed needs a visible Retry
         updateNow.Content = "Retry"; updateNow.IsEnabled = later.IsEnabled = true;
     }
 

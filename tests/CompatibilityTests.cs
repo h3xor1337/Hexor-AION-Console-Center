@@ -166,8 +166,6 @@ internal static class CompatibilityTests
             new Dictionary<string, string> { ["AutoTask_Job"] = "9" }), "Unknown class choice is rejected");
         Throws<InvalidDataException>(() => session.SaveAutoTaskNumber("CharacterRace", 0), "Unknown race choice is rejected");
         Throws<InvalidDataException>(() => registry.WriteVerified("MiniGame", "AutoEnter", 1), "Unsupported registry data type cannot be overwritten by boolean writes");
-        Throws<InvalidDataException>(() => registry.WriteVerified("Enhance", "AutoEnchantMaxPower", 1099), "Enhancement cap below verified range rejected");
-        Throws<InvalidDataException>(() => registry.WriteVerified("Enhance", "AutoEnchantMaxPower", 1501), "Enhancement cap above verified range rejected");
 
         var own = new JsonConfigurationService(Path.Combine(root, "hexor.json"), new SettingsBackupService());
         var tracker = new TrackingRegistry();
@@ -176,7 +174,7 @@ internal static class CompatibilityTests
             check(tracker.Writes == 0, "Startup does not write when an injected registry provider refuses initialization");
             check(startup.Toggles.Where(t => t.Name is "AutoEnter" or "UseTaiwanVillageRules").All(t => t.Value == false),
                 "Mini Game missing-value UI fallbacks are OFF");
-            check(startup.Toggles.Where(t => t.Section == "Enhance").All(t => t.Value == false) && startup.EnhanceCap == "1400", "Enhancement Boolean missing-value UI fallbacks are OFF");
+            check(startup.Toggles.Where(t => t.Section == "Enhance").All(t => t.Value == false), "Enhancement Boolean missing-value UI fallbacks are OFF");
         }
         var productionBytes = File.ReadAllBytes(path);
         using var vm = new MainViewModel(own, registry, adapter);

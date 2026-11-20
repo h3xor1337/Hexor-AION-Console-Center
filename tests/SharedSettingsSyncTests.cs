@@ -116,52 +116,15 @@ internal static class SharedSettingsSyncTests
 
             check(LegionSharedSettings.SyncFromRegistry("Enhance", "CoinShopNightmareDaevanion"), "Explicit sync succeeds");
 
-            // Gather targets: the vendor REG_SZ string syncs as values.targets lines plus the
-            // CJK→display lookup as values.targetNames (verified vendor importer shape).
+            // The in-game Target Filter owns the gather list; the console no longer maps gather
+            // settings into a shared document, and gather.json is never created or rewritten.
             using (var key = Registry.CurrentUser.CreateSubKey(branch + "\\ResourceGrab"))
             {
-                key.SetValue("GatherTargetNames", "\uFEFF奧德\tOdyle\n紅寶石\tRuby", RegistryValueKind.String);
-                key.SetValue("GatherTargets", "1\t奧德\n0\t紅寶石", RegistryValueKind.String);
+                key.SetValue("GatherTargetNames", "﻿奧德	Odyle", RegistryValueKind.String);
+                key.SetValue("GatherTargets", "1	奧德", RegistryValueKind.String);
             }
             service.WriteVerified("ResourceGrab", "GatherQualityFilterLevel", 1);
-            var gatherPath = Path.Combine(shared, "gather.json");
-            check(File.Exists(gatherPath), "Verified gather write creates the gather.json shared document");
-            var gather = JsonNode.Parse(File.ReadAllText(gatherPath))!.AsObject();
-            var gatherValues = gather["values"]!.AsObject();
-            var targets = gatherValues["targets"]!.AsArray();
-            var names = gatherValues["targetNames"]!.AsObject();
-            check(targets.Count == 2 && targets[0]!.GetValue<string>() == "1\t奧德" && targets[1]!.GetValue<string>() == "0\t紅寶石"
-                && names["奧德"]!.GetValue<string>() == "Odyle" && names["紅寶石"]!.GetValue<string>() == "Ruby"
-                && gatherValues["qualityFilterLevel"]!.GetValue<int>() == 1,
-                "gather.json mirrors the vendor flag\tidentifier targets and the names lookup");
-
-            // Wipe recovery: the vendor updater deletes registry values during installs and the game
-            // can persist an empty filter. The reconcile must rebuild the saved list from the shared
-            // document instead of publishing an empty list to the game.
-            using (var key = Registry.CurrentUser.OpenSubKey(branch + "\\ResourceGrab", true)) key!.DeleteValue("GatherTargets", false);
-            check(LegionSharedSettings.SyncGroup(shared, "gather", branch), "Sync succeeds after the registry targets value is wiped");
-            using (var key = Registry.CurrentUser.OpenSubKey(branch + "\\ResourceGrab"))
-                check(key!.GetValue("GatherTargets", null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string == "1\t奧德\n0\t紅寶石",
-                    "A wiped registry gather list is restored from the shared document");
-            var restoredGather = JsonNode.Parse(File.ReadAllText(gatherPath))!.AsObject();
-            check((restoredGather["values"]!["targets"] as JsonArray)!.Count == 2, "The shared document keeps the full gather list through the wipe");
-
-            using (var key = Registry.CurrentUser.OpenSubKey(branch + "\\ResourceGrab", true)) key!.SetValue("GatherTargets", "", RegistryValueKind.String);
-            check(LegionSharedSettings.SyncGroup(shared, "gather", branch), "Sync succeeds after the registry targets value is emptied");
-            using (var key = Registry.CurrentUser.OpenSubKey(branch + "\\ResourceGrab"))
-                check(key!.GetValue("GatherTargets", null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string == "1\t奧德\n0\t紅寶石",
-                    "An emptied registry gather list is restored from the shared document");
-
-            // Never fabricate: with no saved list anywhere (no registry value, no document targets),
-            // the reconcile must not invent resource entries.
-            using (var key = Registry.CurrentUser.OpenSubKey(branch + "\\ResourceGrab", true)) key!.DeleteValue("GatherTargets", false);
-            var withoutTargets = JsonNode.Parse(File.ReadAllText(gatherPath))!.AsObject();
-            (withoutTargets["values"]!.AsObject())["targets"] = new JsonArray();
-            File.WriteAllText(gatherPath, withoutTargets.ToJsonString());
-            check(LegionSharedSettings.SyncGroup(shared, "gather", branch), "Sync succeeds with no saved list anywhere");
-            using (var key = Registry.CurrentUser.OpenSubKey(branch + "\\ResourceGrab"))
-                check(key!.GetValue("GatherTargets", null, RegistryValueOptions.DoNotExpandEnvironmentNames) is null,
-                    "No gather list is fabricated when none was ever saved");
+            check(!File.Exists(Path.Combine(shared, "gather.json")), "Console writes no longer create the gather.json shared document");
 
             Registry.CurrentUser.DeleteSubKeyTree(branch, false);
         }

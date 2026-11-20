@@ -16,9 +16,10 @@ namespace Hexor.Runtime;
 //   - payload length must be 0..10485760 (10 MiB) exactly as the vendor host enforces;
 //   - StatusUpdate payload is UTF-8 JSON GameStatusData (camelCase properties);
 //   - Command payload is UTF-8 JSON {"command": string, "args": {...}}.
-// Hexor only observes game state and sends explicit operator-initiated controls (StopAll,
-// RefreshCurrentStatus). It never starts automation, never touches game memory, and never reads
-// or writes challenge content.
+// Hexor observes game state and sends explicit operator-initiated controls only (StartAutoTask,
+// StopAll, RefreshCurrentStatus, ApplyDefaultConfig), always from a visible button the operator
+// clicks (or from the settings-repair follow-up after a file repair). It never starts automation
+// on its own, never touches game memory, and never reads or writes challenge content.
 public enum GameIpcMessageType
 {
     Heartbeat = 1,

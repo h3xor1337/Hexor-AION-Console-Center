@@ -46,9 +46,6 @@ public static class LegionSharedSettings
         new SharedSettingMapping("abyss", "counterAttack", "ResourceGrab", "AbyssCounterAttack", SharedSettingKind.Boolean),
         new SharedSettingMapping("auction", "autoSell", "ResourceGrab", "AuctionAutoSell", SharedSettingKind.Boolean),
         new SharedSettingMapping("auction", "priceMode", "ResourceGrab", "AuctionPriceMode", SharedSettingKind.Integer),
-        new SharedSettingMapping("gather", "qualityFilterEnabled", "ResourceGrab", "GatherQualityFilterEnabled", SharedSettingKind.Boolean),
-        new SharedSettingMapping("gather", "qualityFilterLevel", "ResourceGrab", "GatherQualityFilterLevel", SharedSettingKind.Integer),
-        new SharedSettingMapping("gather", "ignoreAether", "ResourceGrab", "GatherIgnoreAether", SharedSettingKind.Boolean),
         new SharedSettingMapping("dungeon", "legacyUrugugu", "ResourceGrab", "AutoDungeonUrugugu", SharedSettingKind.Boolean),
         new SharedSettingMapping("dungeon", "mode", "ResourceGrab", "AutoDungeonMode", SharedSettingKind.Integer),
         new SharedSettingMapping("enhance", "autoUpgradeMaxBattlePowerK", "Enhance", "AutoUpgradeMaxBattlePowerK", SharedSettingKind.Integer),
@@ -215,25 +212,6 @@ public static class LegionSharedSettings
         }
 
         if (group == "dungeon" && ReadDungeonPriorityDocument(registryRoot) is { } priority) values["priority"] = priority.DeepClone();
-        if (group == "gather")
-        {
-            var gather = ReadGatherTargetsDocument(registryRoot);
-            if (gather is null || (gather["targets"] as JsonArray)?.Count == 0)
-            {
-                Diagnostics.Log("shared-settings", $"gather-targets-unreadable; registry={DescribeRegistryGatherState(registryRoot)}");
-                // The saved resource list must survive: the updater wipes registry values during
-                // installs and the game can persist an empty filter. The shared document is the
-                // repair source, so the registry list is rebuilt from it instead of publishing
-                // an empty list to the game.
-                var restored = RestoreGatheringTargetsFromDocument(existing, registryRoot);
-                if (restored is { }) { gather = restored; Diagnostics.Log("shared-settings", "gather-targets-restored-from-document"); }
-            }
-            if (gather is { })
-            {
-                values["targets"] = gather["targets"]!.DeepClone();
-                values["targetNames"] = gather["targetNames"]!.DeepClone();
-            }
-        }
         existing ??= new JsonObject { ["updatedBy"] = "commander" };
         var currentValuesText = (existing["values"] as JsonObject)?.ToJsonString();
         var currentMirrorText = (existing["registryMirror"] as JsonObject)?.ToJsonString();
@@ -268,111 +246,6 @@ public static class LegionSharedSettings
     }
 
     // Gather targets are string-encoded registry values: lines of "1\t<identifier>". The shared
-    // document stores values.targets as a JSON array of those same lines, plus the CJK→display
-    // lookup from GatherTargetNames as values.targetNames (verified vendor importer shape).
-    public static JsonObject? ReadGatherTargetsDocument(string? registryRoot = null)
-    {
-        try
-        {
-            using var hive = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Registry64);
-            using var key = hive.OpenSubKey((registryRoot ?? "Software\\LegionCommander") + "\\ResourceGrab");
-            if (key?.GetValue("GatherTargets", null, RegistryValueOptions.DoNotExpandEnvironmentNames) is not string text) return null;
-            var targets = new JsonArray();
-            foreach (var raw in text.Split('\n'))
-            {
-                var line = raw.TrimEnd('\r');
-                if (line.Length < 3 || line[1] != '\t' || (line[0] != '0' && line[0] != '1')) continue;
-                targets.Add(line);
-            }
-            var names = new JsonObject();
-            if (key?.GetValue("GatherTargetNames", null, RegistryValueOptions.DoNotExpandEnvironmentNames) is string namesText)
-            {
-                foreach (var raw in namesText.Split('\n'))
-                {
-                    var line = raw.TrimStart('\uFEFF').TrimEnd('\r');
-                    var tab = line.IndexOf('\t');
-                    if (tab > 0 && tab < line.Length - 1) names.TryAdd(line[..tab], line[(tab + 1)..]);
-                }
-            }
-            return new JsonObject { ["targets"] = targets, ["targetNames"] = names };
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException)
-        {
-            return null;
-        }
-    }
-
-    // Registry gather state for support logs: which of the two string values exist and how many
-    // saved target lines each parses to.
-    private static string DescribeRegistryGatherState(string? registryRoot)
-    {
-        try
-        {
-            using var hive = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Registry64);
-            using var key = hive.OpenSubKey((registryRoot ?? "Software\\LegionCommander") + "\\ResourceGrab");
-            if (key == null) return "section-missing";
-            var targets = ReadGatherTargetsDocument(registryRoot)?["targets"] as JsonArray;
-            return "targetsValue=" + (key.GetValue("GatherTargets", null, RegistryValueOptions.DoNotExpandEnvironmentNames) is string _ ? "exists" : "missing")
-                + "; namesValue=" + (key.GetValue("GatherTargetNames", null, RegistryValueOptions.DoNotExpandEnvironmentNames) is string _ ? "exists" : "missing")
-                + "; parsed=" + (targets?.Count ?? 0);
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException)
-        {
-            return "unreadable; type=" + e.GetType().Name;
-        }
-    }
-
-    // Self-heal: rebuild the registry GatherTargets/GatherTargetNames strings from the targets the
-    // shared document still holds. Runs under the same gathering mutex as the console's own edits,
-    // verifies the write, and returns the freshly-read document. Returns null when there is nothing
-    // to restore from, the registry is currently busy, or the branch is a disposable test branch.
-    public static JsonObject? RestoreGatheringTargetsFromDocument(JsonObject? existing, string? registryRoot = null)
-    {
-        var liveRoot = (registryRoot ?? "Software\\LegionCommander") == "Software\\LegionCommander";
-        if (!liveRoot && SharedDirectoryOverride is null) return null;
-        try
-        {
-            var lines = (existing?["values"]?["targets"] as JsonArray)?.OfType<JsonNode>()
-                .Select(node => node?.GetValue<string>())
-                .Where(line => line is { Length: > 2 } && (line[0] == '0' || line[0] == '1') && line[1] == '\t' && line.IndexOf('\t', 2) < 0 && line[2..].Length > 0)
-                .Select(line => line!)
-                .Distinct(StringComparer.Ordinal)
-                .ToArray() ?? [];
-            if (lines.Length == 0) return null;
-            var names = existing?["values"]?["targetNames"] as JsonObject;
-            var targetsText = string.Join("\n", lines);
-            string? namesText = null;
-            if (names is { Count: > 0 })
-                namesText = string.Join("\n", names.Select(pair => pair.Key + "\t" + (pair.Value?.GetValue<string>() ?? "")));
-
-            using var mutex = new Mutex(false, "Local\\Hexor.LegionCommander.GatheringEdit");
-            var acquired = false;
-            try
-            {
-                try { acquired = mutex.WaitOne(0); } catch (AbandonedMutexException) { acquired = true; }
-                if (!acquired) return null; // a console edit is in flight; the next reconcile retries
-                using var hive = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Registry64);
-                using var key = hive.OpenSubKey((registryRoot ?? "Software\\LegionCommander") + "\\ResourceGrab", writable: true)
-                    ?? hive.CreateSubKey((registryRoot ?? "Software\\LegionCommander") + "\\ResourceGrab");
-                if (key == null) return null;
-                var currentTargets = ReadGatherTargetsDocument(registryRoot)?["targets"] as JsonArray;
-                if (currentTargets is { Count: > 0 }) return null; // the registry healed on its own; keep it
-                key.SetValue("GatherTargets", targetsText, RegistryValueKind.String);
-                if (namesText is { }) key.SetValue("GatherTargetNames", namesText, RegistryValueKind.String);
-                var verified = ReadGatherTargetsDocument(registryRoot);
-                var verifiedCount = (verified?["targets"] as JsonArray)?.Count ?? 0;
-                if (verifiedCount != lines.Length) { Diagnostics.Log("shared-settings", "gather-targets-restore-unverified", DiagnosticSeverity.Warning); return null; }
-                return verified;
-            }
-            finally { if (acquired) mutex.ReleaseMutex(); }
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException or ArgumentException)
-        {
-            Diagnostics.Log("shared-settings", "gather-targets-restore-failed; type=" + e.GetType().Name, DiagnosticSeverity.Warning);
-            return null;
-        }
-    }
-
     // Dungeon priority is a string-encoded registry value: lines of "1\t600001" (flag TAB mapId).
     // The shared document stores [{ "id": 600001, "checked": true }, ...].
     public static JsonArray? ReadDungeonPriorityDocument(string? registryRoot = null) => ReadDungeonDocument(registryRoot)?["priority"]?.AsArray();

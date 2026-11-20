@@ -25,7 +25,7 @@ internal static class ReleaseReadinessTests
             check(restarted.ReadAutoTask(name)==0 && registry.Read("AutoTask",name)==0,
                 "Audit restart: AutoTask JSON/registry " + name);
         }
-        foreach (var (section,name,value) in new[] { ("Enhance","AutoEnchantMaxPower",1450), ("Enhance","AutoBuyOdEnergy",0),
+        foreach (var (section,name,value) in new[] { ("Enhance","AutoBuyOdEnergy",0),
             ("Enhance","AutoBuyReviveStone",0),("Enhance","AutoDungeonQuickJoinEnabled",0),("Enhance","DestroyInsteadOfExtract",1),("MiniGame","AutoEnter",0),("MiniGame","UseTaiwanVillageRules",1) })
         {
             using (var key=Registry.CurrentUser.CreateSubKey(registryPath+"\\"+section)) key.SetValue("FutureValue","retain",RegistryValueKind.String);

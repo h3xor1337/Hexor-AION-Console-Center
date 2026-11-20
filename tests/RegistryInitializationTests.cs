@@ -35,9 +35,35 @@ internal static class RegistryInitializationTests
             "Fresh installation creates every Shop Exchange and Enhance toggle as DWORD OFF so a customer who never opened the vendor console does not keep buying");
         check(new[]{ "CoinShopNightmareDaevanion", "CoinShopNightmareStigma", "CoinShopFestivalDaevanion", "CoinShopFestivalStigma", "CoinShopAbyssStigma" }.All(name => Hexor.Compatibility.LegionSharedSettings.Mappings.Any(m => m.Group == "shop" && m.Group == "shop" && m.Section == "Enhance" && m.ValueName == name)),
             "Every Shop Exchange purchase toggle is mapped into the shared shop document");
-        check(registry.Read("ResourceGrab", "GatherQualityFilterEnabled") == 0 && registry.Read("ResourceGrab", "GatherQualityFilterLevel") == 1 && registry.Read("ResourceGrab", "GatherIgnoreAether") == 0 && registry.Read("ResourceGrab", "AutoDungeonUrugugu") == 0,
-            "Missing gathering and dungeon preference values are created with safe defaults");
+        check(registry.Read("ResourceGrab", "AutoDungeonUrugugu") == 0, "Missing dungeon preference values are created with safe defaults");
+        // The in-game Target Filter owns the gather settings; the console neither seeds nor writes them.
         check(registry.ReadAppliedSchemaVersion() == LegionCommanderRegistrySchema.Version, "Successful startup records the embedded schema version in Hexor-owned metadata");
+
+        // One-time legacy gather registry migration: the stale list that fed the wipe cycle is
+        // removed so the game module rebuilds its own defaults; the run is marked and never
+        // repeats, so values the vendor console saves afterwards are preserved.
+        // Simulate an upgrading customer: their install predates the migration marker.
+        Registry.CurrentUser.DeleteSubKeyTree(branch + @"\_HexorSchema", false);
+        using (var key = Registry.CurrentUser.CreateSubKey(branch + @"\ResourceGrab", writable: true))
+        {
+            key.SetValue("GatherTargets", "1\t奧德\n0\t紅寶石", RegistryValueKind.String);
+            key.SetValue("GatherTargetNames", "奧德\tOdyle", RegistryValueKind.String);
+            key.SetValue("GatherQualityFilterEnabled", 1, RegistryValueKind.DWord);
+        }
+        service.Ensure();
+        using (var key = Registry.CurrentUser.OpenSubKey(branch + @"\ResourceGrab"))
+        {
+            check(key!.GetValue("GatherTargets") == null && key.GetValue("GatherTargetNames") == null && key.GetValue("GatherQualityFilterEnabled") == null,
+                "The first startup removes the stale legacy gather list and its filter values");
+            check(key.GetValue("AuctionAutoSell") != null, "Non-gather ResourceGrab values survive the migration");
+        }
+        check(registry.ReadGatherMigrationDone(), "The gather registry migration is recorded as done");
+        using (var key = Registry.CurrentUser.CreateSubKey(branch + @"\ResourceGrab", writable: true))
+            key.SetValue("GatherTargets", "1\t世界樹", RegistryValueKind.String);
+        service.Ensure();
+        using (var key = Registry.CurrentUser.OpenSubKey(branch + @"\ResourceGrab"))
+            check(key!.GetValue("GatherTargets") as string == "1\t世界樹",
+                "After the one-time migration, values the vendor console saves later are never touched");
 
         // Retired-feature push: a value a customer previously enabled is deleted on startup.
         using (var key = Registry.CurrentUser.CreateSubKey(branch + "\\ResourceGrab", writable: true)) key.SetValue("GuardianLogoutAvoidance", 1, RegistryValueKind.DWord);
@@ -78,7 +104,7 @@ internal static class RegistryInitializationTests
         using (var key = Registry.CurrentUser.CreateSubKey(branch + "\\Nightmare")) key.SetValue("RuntimeRecord", "opaque", RegistryValueKind.String);
         result = service.Ensure();
         using (var key = Registry.CurrentUser.OpenSubKey(branch + "\\AutoTask"))
-            check(result.Success && registry.Read("AutoTask", "ClearSideQuestsBeforeDungeon") == 1 && registry.Read("AutoTask", "ExploreCavesBeforeDungeon") == 0 && registry.Read("Enhance", "AutoEnchantMaxPower") == 1200 && (int?)key!.GetValue("CharacterRace") == 2 && (int?)key.GetValue("CharacterJob") == 7 && (int?)key.GetValue("AutoDailyQuests") == 1 && (string?)key.GetValue("CustomerOnly") == "retain", "Enabled, disabled, numeric identity, daily-task, and unrelated customer values are preserved");
+            check(result.Success && registry.Read("AutoTask", "ClearSideQuestsBeforeDungeon") == 1 && registry.Read("AutoTask", "ExploreCavesBeforeDungeon") == 0 && (int?)key!.GetValue("CharacterRace") == 2 && (int?)key.GetValue("CharacterJob") == 7 && (int?)key.GetValue("AutoDailyQuests") == 1 && (string?)key.GetValue("CustomerOnly") == "retain", "Enabled, disabled, numeric identity, daily-task, and unrelated customer values are preserved");
         using (var key = Registry.CurrentUser.OpenSubKey(branch + "\\Nightmare")) check((string?)key!.GetValue("RuntimeRecord") == "opaque", "Nightmare runtime records remain untouched");
 
         using (var key = Registry.CurrentUser.OpenSubKey(branch + "\\AutoTask", writable: true)) key!.SetValue("SwitchToGatherAfterTasks", "opaque", RegistryValueKind.String);

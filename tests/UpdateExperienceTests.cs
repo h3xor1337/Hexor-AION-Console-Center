@@ -37,6 +37,21 @@ internal static class UpdateExperienceTests
             "Completion notification requires manual reopen and does not offer automatic restart");
         Capture(complete, Artifact(root, "update-complete.png")); complete.Close();
         check(invoked == 0, "Rendering update dialogs performs no download or installation side effects");
+
+        // Forced updates (startup or periodic check): no opt-out, install begins on its own,
+        // and a failure must reveal the Retry action.
+        var forcedInvoked = 0;
+        var forced = new UpdateAvailableDialog("1.0.9", release, _ => { forcedInvoked++; return Task.CompletedTask; }, forced: true);
+        forced.Show(); forced.UpdateLayout(); Pump();
+        check(forcedInvoked == 1 && Find<Button>(forced, "UpdateLaterButton") == null
+            && Find<Button>(forced, "UpdateNowButton")?.Visibility == Visibility.Collapsed,
+            "Forced update dialogs begin installing on their own and offer no opt-out");
+        forced.ShowFailure("Update could not be completed", "The update could not be downloaded."); forced.UpdateLayout();
+        check(Find<Button>(forced, "UpdateNowButton")?.Visibility == Visibility.Visible
+            && Find<Button>(forced, "UpdateNowButton")?.Content is "Retry"
+            && Find<Button>(forced, "UpdateLaterButton") == null,
+            "A failed forced update keeps the current installation and reveals only Retry");
+        forced.Close();
     }
 
     static string Artifact(string root, string name)

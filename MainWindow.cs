@@ -376,31 +376,6 @@ public sealed class MainWindow : Window
   RadioRow(abyss,"Target layer","AbyssLayer",("AbyssLayerLower","Lower",0),("AbyssLayerMiddle","Middle",1));
   RegistryOptions(abyss,"ResourceGrab",["AbyssCounterAttack"]);
 
-  var gathering=Section(root,"Gathering Filter");
-  RegistryOptions(gathering,"ResourceGrab",["GatherQualityFilterEnabled"]);
-  var qualityRow=RadioRow(gathering,"Minimum quality","Gathering.QualityLevel",("GatherQualityWhite","White","1"),("GatherQualityGreen","Green","2"),("GatherQualityBlue","Blue","3"));
-  qualityRow.SetBinding(IsEnabledProperty,new Binding("Gathering.CanEditQuality"));
-  var qualityDetail=Text("",12,false,"#B9ADCA");qualityDetail.SetBinding(TextBlock.TextProperty,new Binding("Gathering.QualityDetail"));gathering.Children.Add(qualityDetail);
-  var applyQuality=Button("Apply quality level",Model.Gathering.SaveQualityLevel);applyQuality.Name="ApplyGatherQualityLevel";applyQuality.SetBinding(IsEnabledProperty,new Binding("Gathering.CanEditQuality"));gathering.Children.Add(applyQuality);
-  RegistryOptions(gathering,"ResourceGrab",["GatherIgnoreAether"]);
-  var gatherListRow=new Grid{Margin=new Thickness(0,6,0,4)};gatherListRow.ColumnDefinitions.Add(new());gatherListRow.ColumnDefinitions.Add(new(){Width=GridLength.Auto});gathering.Children.Add(gatherListRow);
-  gatherListRow.Children.Add(Text(T("Gather list (only checked types are gathered)"),13,true));
-  var restore=Button("Restore defaults",Model.Gathering.RestoreDefaults);restore.Name="RestoreGatheringDefaultsButton";Grid.SetColumn(restore,1);gatherListRow.Children.Add(restore);
-  var summary=Text("",12,false,"#B9ADCA");summary.SetBinding(TextBlock.TextProperty,new Binding("Gathering.Summary"));gathering.Children.Add(summary);
-  var targets=new ItemsControl{Name="GatheringResources"};targets.SetBinding(ItemsControl.ItemsSourceProperty,new Binding("Gathering.Resources"));
-  targets.ItemTemplate=(DataTemplate)System.Windows.Markup.XamlReader.Parse("""
-   <DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
-    <Grid Margin="0,3,8,3">
-     <Grid.ColumnDefinitions><ColumnDefinition Width="22"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-     <TextBlock Text="{Binding Ordinal}" VerticalAlignment="Center" Foreground="#A99ABF"/>
-     <TextBlock Grid.Column="1" Text="{Binding DisplayName}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,12,0" ToolTip="{Binding Identifier}"/>
-     <CheckBox Grid.Column="2" VerticalAlignment="Center" IsChecked="{Binding Enabled, Mode=TwoWay}" IsEnabled="{Binding IsEditable}" AutomationProperties.Name="{Binding DisplayName}"/>
-    </Grid>
-   </DataTemplate>
-   """);
-  gathering.Children.Add(new ScrollViewer{Name="GatheringResourceScroll",MaxHeight=320,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,Content=targets});
-  gathering.Children.Add(Button("Refresh gathering settings",Model.Gathering.Reload));
-
   var auction=Section(root,"Auction","Each Hexor startup resets auto sell to OFF and price mode to Average.");
   RegistryOptions(auction,"ResourceGrab",["AuctionAutoSell"]);
   var priceRow=RadioRow(auction,"Price","AuctionPriceMode",("AuctionPriceModeLowest","Lowest",0),("AuctionPriceModeAverage","Average",1));
@@ -442,7 +417,6 @@ public sealed class MainWindow : Window
   CheckToggle(flow,"AutoAwakenEnabled","Auto-challenge Ascension Trial (rewards Enchantment Stones and Amplification Fragments)");
   CheckToggle(flow,"AutoOdMorphEnabled","Auto-morph Odyle Energy");
   CheckToggle(flow,"AutoDungeonQuickJoinEnabled","Quick Join existing rooms at 60K+ battle power");
-  RegistryOptions(flow,"ResourceGrab",["AutoDungeonUrugugu"]);
  }
 
  private void CaptchaPage(StackPanel root)
@@ -467,11 +441,6 @@ public sealed class MainWindow : Window
   CheckToggle(upgrade,"EnchantBoundKinahOnly","Auto-enchant with bound Kinah only (keep at least 500,000)");
   var battleCurrent=Text("",12,false,"#B9ADCA");battleCurrent.SetBinding(TextBlock.TextProperty,new Binding("CurrentUpgradeMaxBattlePowerK"){StringFormat="Saved registry value: {0}K"});upgrade.Children.Add(battleCurrent);
   upgrade.Children.Add(Button("Apply combat power cap",Model.SaveUpgradeMaxBattlePowerK));
-
-  var gear=Section(root,"Gear enhancement level","AutoEnchantMaxPower remains a separate setting. Choose a value from 1100 to 1500.");
-  var current=Text("",13);current.SetBinding(TextBlock.TextProperty,new Binding("CurrentCap"){StringFormat="Saved registry value: {0}"});gear.Children.Add(current);
-  var input=Input(gear,"Gear enhancement level cap","EnhanceCap");
-  var slider=new Slider{Name="AutoEnchantMaxPowerSlider",Minimum=1100,Maximum=1500,TickFrequency=1,IsSnapToTickEnabled=true,Margin=new(0,10,0,16)};slider.SetBinding(Slider.ValueProperty,new Binding("EnhanceCap"){Mode=BindingMode.OneWay});slider.PreviewMouseLeftButtonUp+=(_,_)=>{Model.EnhanceCap=((int)slider.Value).ToString();input.GetBindingExpression(TextBox.TextProperty)?.UpdateTarget();};slider.PreviewKeyUp+=(_,_)=>{Model.EnhanceCap=((int)slider.Value).ToString();input.GetBindingExpression(TextBox.TextProperty)?.UpdateTarget();};gear.Children.Add(slider);gear.Children.Add(Button("Apply gear enhancement cap",Model.SaveCap));
 
   var extraction=Section(root,"Equipment Extraction","When the bag contains 100,000 or more Enhancement Stones, equipment that would normally be extracted is destroyed instead. Below 100,000, extraction continues normally.");
   CheckToggle(extraction,"DestroyInsteadOfExtract","Destroy instead of extracting at 100,000 Enchantment Stones");
@@ -645,6 +614,42 @@ public sealed class MainWindow : Window
       InstructionPresentation.CompletionOptions.Select(option => (option.Value, option.Label)).ToArray(), "Preferences.AfterFinish");
   completion.Children.Add(PrimaryEditorButton("ApplyDailyWorkflow", "Apply instruction settings", Model.SaveDailyCommand));
   AddEditorStatus(completion, nameof(MainViewModel.WorkflowEditorStatus));
+
+  var sequenceControls = Section(detailColumn, "Run controls", "Starts or stops the saved task sequence inside the running game — the same commands the in-game menu uses. The game must be running; the sequence follows the instruction order above.");
+  var runRow = new StackPanel { Orientation = Orientation.Horizontal };
+  var startSequence = Button("Start sequence", async () => await Model.StartDailySequenceAsync());
+  startSequence.Name = "StartDailySequenceButton";
+  startSequence.Background = Brush("#6942A8");
+  runRow.Children.Add(startSequence);
+  var stopSequence = Button("Stop", async () => await Model.StopDailySequenceAsync());
+  stopSequence.Name = "StopDailySequenceButton";
+  stopSequence.Background = Brush("#69284A");
+  stopSequence.Margin = new Thickness(10, 0, 0, 0);
+  runRow.Children.Add(stopSequence);
+  var applyDefault = Button("Use default config", async () =>
+  {
+      var session = Model.ConnectedGameSession();
+      if (session == null) { Model.Status = "Start AION2 first — the default config applies inside the running game."; return; }
+      await Model.ApplyDefaultConfigAsync(session.ProcessId);
+  });
+  applyDefault.Name = "ApplyDefaultConfigButton";
+  applyDefault.Background = Brush("#6942A8");
+  applyDefault.Margin = new Thickness(10, 0, 0, 0);
+  runRow.Children.Add(applyDefault);
+  var startGathering = Button("Start gathering", async () => await Model.StartGatheringAsync());
+  startGathering.Name = "StartGatheringButton";
+  startGathering.Background = Brush("#6942A8");
+  startGathering.Margin = new Thickness(10, 0, 0, 0);
+  runRow.Children.Add(startGathering);
+  var stopGathering = Button("Stop gathering", async () => await Model.StopGatheringAsync());
+  stopGathering.Name = "StopGatheringButton";
+  stopGathering.Background = Brush("#69284A");
+  stopGathering.Margin = new Thickness(10, 0, 0, 0);
+  runRow.Children.Add(stopGathering);
+  sequenceControls.Children.Add(runRow);
+  var runStatus = Text("", 12, false, "#B9ADCA");
+  runStatus.SetBinding(TextBlock.TextProperty, "Status");
+  sequenceControls.Children.Add(runStatus);
  }
 
  private void ImportWorkflow()

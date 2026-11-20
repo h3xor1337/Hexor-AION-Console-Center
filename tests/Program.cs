@@ -12,10 +12,10 @@ internal static class Program
  private static void Assert(bool value,string message){if(!value)throw new Exception(message);Console.WriteLine("PASS "+message);passed++;}
  [STAThread]private static int Main(string[] args)
  {
+  Hexor.Runtime.CharacterSettingsRepairService.LiveSweepEnabled=false; // tests sweep explicit temp directories only
   if(args.Length==2&&args[0]=="--instance-child")return UpdateSessionTests.InstanceChild(args[1]);
   if(args.Length==1&&args[0]=="--update-session-only")return RunFocused(UpdateSessionTests.Run);
   if(args.Length==1&&args[0]=="--daily-registry-only")return RunFocused(DailyQuestRegistryTests.Run);
-  if(args.Length==1&&args[0]=="--lc-registry-only")return RunFocused(LcRegistryFeatureTests.Run);
   if(args.Length==1&&args[0]=="--captcha-only")return RunFocused(CaptchaMonitorTests.Run);
   if(args.Length==1&&args[0]=="--runtime-mcp-only")return RunFocused(RuntimeMcpClientTests.Run);
   if(args.Length==1&&args[0]=="--game-ipc-only")return RunFocused(GameIpcTests.Run);
@@ -73,7 +73,7 @@ internal static class Program
    using(var key=Registry.CurrentUser.CreateSubKey(registryRoot+"\\MiniGame"))key.SetValue("AutoEnter","opaque",RegistryValueKind.String);Assert(reg.Read("MiniGame","AutoEnter")==null,"Unsupported registry type retained on read");
    var denied=new RegistryToggle(new DeniedRegistry(),"MiniGame","AutoEnter","test",_=>{});denied.Value=true;Assert(denied.Value==null,"Registry failure rolls back UI value");
    using(var vm=new MainViewModel(json,reg)){vm.MaxAccounts="0";vm.SaveSchedule();Assert(vm.Status.StartsWith("Enter positive"),"Zero accounts rejected");vm.MaxAccounts="2";vm.WorkMin="120";vm.WorkMax="60";vm.SaveSchedule();Assert(vm.Status.StartsWith("Enter positive"),"Reversed work range rejected");vm.WorkMin="invalid";vm.SaveSchedule();Assert(vm.Status.StartsWith("Enter positive"),"Invalid numeric input does not crash");vm.WorkMin="60";vm.WorkMax="120";vm.RestMin="5";vm.RestMax="10";vm.SaveSchedule();Assert(json.Load().MaxAccounts==2,"Valid schedule persists");vm.GatherMin="40";vm.GatherMax="20";vm.SaveDaily();Assert(vm.Status.StartsWith("Gathering duration"),"Invalid gathering range rejected");}
-   using(var capVm=new MainViewModel(json,reg)){reg.WriteVerified("Enhance","AutoEnchantMaxPower",1300);reg.WriteVerified("Enhance","AutoUpgradeMaxBattlePowerK",77);capVm.ReloadRegistry();Assert(capVm.EnhanceCap=="1300"&&capVm.UpgradeMaxBattlePowerK=="77","Combat-power and enhancement caps load from their independent registry mappings");capVm.UpgradeMaxBattlePowerK="55";capVm.SaveUpgradeMaxBattlePowerK();Assert(reg.Read("Enhance","AutoUpgradeMaxBattlePowerK")==55&&reg.Read("Enhance","AutoEnchantMaxPower")==1300,"Combat-power slider value persists without changing AutoEnchantMaxPower");capVm.UpgradeMaxBattlePowerK="0";capVm.SaveUpgradeMaxBattlePowerK();Assert(reg.Read("Enhance","AutoUpgradeMaxBattlePowerK")==55&&capVm.Status.Contains("1–100K"),"Combat-power cap rejects values below the verified slider range");capVm.UpgradeMaxBattlePowerK="101";capVm.SaveUpgradeMaxBattlePowerK();Assert(reg.Read("Enhance","AutoUpgradeMaxBattlePowerK")==55,"Combat-power cap rejects values above the verified slider range");capVm.EnhanceCap="1400";capVm.SaveCap();Assert(reg.Read("Enhance","AutoEnchantMaxPower")==1400&&reg.Read("Enhance","AutoUpgradeMaxBattlePowerK")==55,"AutoEnchantMaxPower remains separate and preserves the combat-power cap");capVm.SaveCap();Assert(capVm.Status.Contains("no registry write"),"Unmodified gear cap skips registry write");var od=capVm.Toggles.Single(x=>x.Name=="AutoBuyOdEnergy");var revive=capVm.Toggles.Single(x=>x.Name=="AutoBuyReviveStone");od.Value=false;revive.Value=true;Assert(reg.Read("Enhance","AutoBuyOdEnergy")==0&&reg.Read("Enhance","AutoBuyReviveStone")==1,"Membership Benefits toggles persist independently");}
+   using(var capVm=new MainViewModel(json,reg)){reg.WriteVerified("Enhance","AutoUpgradeMaxBattlePowerK",77);reg.WriteVerified("Enhance","AutoUpgradeMaxBattlePowerK",77);capVm.ReloadRegistry();Assert(capVm.UpgradeMaxBattlePowerK=="77","Combat-power cap loads from its registry mapping");capVm.UpgradeMaxBattlePowerK="55";capVm.SaveUpgradeMaxBattlePowerK();Assert(reg.Read("Enhance","AutoUpgradeMaxBattlePowerK")==55,"Combat-power slider value persists");capVm.UpgradeMaxBattlePowerK="0";capVm.SaveUpgradeMaxBattlePowerK();Assert(reg.Read("Enhance","AutoUpgradeMaxBattlePowerK")==55&&capVm.Status.Contains("1–100K"),"Combat-power cap rejects values below the verified slider range");capVm.UpgradeMaxBattlePowerK="101";capVm.SaveUpgradeMaxBattlePowerK();Assert(reg.Read("Enhance","AutoUpgradeMaxBattlePowerK")==55,"Combat-power cap rejects values above the verified slider range");var od=capVm.Toggles.Single(x=>x.Name=="AutoBuyOdEnergy");var revive=capVm.Toggles.Single(x=>x.Name=="AutoBuyReviveStone");od.Value=false;revive.Value=true;Assert(reg.Read("Enhance","AutoBuyOdEnergy")==0&&reg.Read("Enhance","AutoBuyReviveStone")==1,"Membership Benefits toggles persist independently");}
    using(var deniedCapVm=new MainViewModel(json,new DeniedRegistry())){deniedCapVm.UpgradeMaxBattlePowerK="50";deniedCapVm.SaveUpgradeMaxBattlePowerK();Assert(deniedCapVm.Status.Contains("not saved")&&deniedCapVm.CurrentUpgradeMaxBattlePowerK.Contains("Default"),"Failed combat-power registry writes do not claim persistence");}
    var mock=Path.Combine(root,"config");Directory.CreateDirectory(mock);File.WriteAllText(Path.Combine(mock,"settings.json"),"{\"unrelated\":1}");var discovery=new ConfigurationDiscoveryService(json);Assert(!discovery.DiscoverAsync(mock).GetAwaiter().GetResult().Any(c=>c.Folder==mock),"Filename alone does not establish schema");File.WriteAllText(Path.Combine(mock,"profile.json"),"{\"AutoCombatConfig\":{},\"GatherConfig\":{},\"AuctionConfig\":{}}");Assert(discovery.DiscoverAsync(mock).GetAwaiter().GetResult().Any(c=>c.Folder==mock),"Observed schema signature discovered");Assert(!discovery.DiscoverAsync(Path.Combine(root,"missing")).GetAwaiter().GetResult().Any(c=>c.Folder.EndsWith("missing")),"Missing configuration folder handled");
    var games=new GameInstallationDiscoveryService();var steam=Path.Combine(root,"Steam","steamapps","common","AION2","Binaries","AION2.exe");Directory.CreateDirectory(Path.GetDirectoryName(steam)!);File.WriteAllText(steam,"");Assert(games.IdentifyClient(steam)=="Steam","Mock Steam structure identified");var purple=Path.Combine(root,"PURPLE","AION2.exe");Assert(games.IdentifyClient(purple).StartsWith("Unknown"),"Unverified PURPLE path does not fabricate launcher metadata");
@@ -97,17 +97,16 @@ internal static class Program
    TestCheckpoint.Run(nameof(DiagnosticsTests),()=>DiagnosticsTests.Run(root,Assert),120);
    TestCheckpoint.Run(nameof(PathMatchedDxgiCleanupTests),()=>PathMatchedDxgiCleanupTests.Run(root,Assert),120);
    TestCheckpoint.Run(nameof(CleanupCommandLineTests),()=>CleanupCommandLineTests.Run(root,Assert),120);
+   TestCheckpoint.Run(nameof(CharacterSettingsRepairTests),()=>CharacterSettingsRepairTests.Run(root,Assert),120);
    TestCheckpoint.Run(nameof(RuntimeDisplayTests),()=>RuntimeDisplayTests.Run(root,reg,Assert),120);
    TestCheckpoint.Run(nameof(ReleaseReadinessTests),()=>ReleaseReadinessTests.Run(root,registryRoot,Assert),120);
    TestCheckpoint.Run(nameof(StorageAuditTests),()=>StorageAuditTests.Run(root,registryRoot,Assert),120);
-   TestCheckpoint.Run(nameof(LcRegistryFeatureTests),()=>LcRegistryFeatureTests.Run(root,Assert),120);
    TestCheckpoint.Run(nameof(SharedSettingsSyncTests),()=>SharedSettingsSyncTests.Run(root,reg,Assert),120);
    TestCheckpoint.Run(nameof(CaptchaMonitorTests),()=>CaptchaMonitorTests.Run(root,Assert),120);
    TestCheckpoint.Run(nameof(RuntimeMcpClientTests),()=>RuntimeMcpClientTests.Run(root,Assert),120);
    TestCheckpoint.Run(nameof(GameIpcTests),()=>GameIpcTests.Run(root,Assert),60);
    TestCheckpoint.Run(nameof(CaptchaAutoSolverTests),()=>CaptchaAutoSolverTests.Run(root,Assert),60);
    TestCheckpoint.Run(nameof(LauncherProvenanceTests),()=>LauncherProvenanceTests.Run(Assert),120);
-   LcRegistryFeatureTests.SeedGathering(registryRoot);
    RunWpfRegression(root,json,reg);
    Console.WriteLine($"ALL {passed} CHECKS PASSED");return 0;
   }catch(Exception e){Console.Error.WriteLine(e);return 1;}
@@ -140,7 +139,7 @@ internal static class Program
   File.WriteAllText(Path.Combine(config,"machine.json"),Envelope(new()).ToJsonString());
   var json=new JsonConfigurationService(Path.Combine(root,"preferences.json"),new SettingsBackupService());json.Load();
   Environment.SetEnvironmentVariable("HEXOR_TEST_ARTIFACTS",Path.Combine(root,"artifacts"));
-  try{LcRegistryFeatureTests.SeedGathering(registryRoot);RunWpfRegression(root,json,new RegistrySettingsService(registryRoot));}
+  try{RunWpfRegression(root,json,new RegistrySettingsService(registryRoot));}
   finally{Environment.SetEnvironmentVariable("HEXOR_TEST_ARTIFACTS",null);Registry.CurrentUser.DeleteSubKeyTree(registryRoot,false);}
  }
  private static void RunWpfRegression(string root,IJsonConfigurationService json,IRegistrySettingsService reg)

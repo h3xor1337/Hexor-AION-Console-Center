@@ -20,12 +20,20 @@ public sealed class UpdatePanel : StackPanel
   current.Text="Current Version: "+Installed;Children.Add(new TextBlock{Text="Updates",FontSize=18,FontWeight=FontWeights.SemiBold});
   foreach(var element in new UIElement[]{current,latest,status,progress,check})Children.Add(element);
   check.Click+=async(_,_)=>await RequestCheck(false);
-  if(automaticallyCheck) Loaded+=async(_,_)=>{if(!started){started=true;await RequestCheck(true);}};
+  if(automaticallyCheck)
+  {
+   Loaded+=async(_,_)=>{if(!started){started=true;await RequestCheck(true);}};
+   // While the console stays open, keep looking for releases so an update applies itself
+   // without waiting for the next launch.
+   var periodic=new System.Windows.Threading.DispatcherTimer{Interval=TimeSpan.FromMinutes(30)};
+   periodic.Tick+=async(_,_)=>{if(!checking&&!installing)await RequestCheck(false);};
+   periodic.Start();
+  }
  }
  async Task RequestCheck(bool startup)
  {
   check.IsEnabled=false;
-  try { await UpdateSession.Current.Run(startup,()=>Check(showAvailable:true)); }
+  try { await UpdateSession.Current.Run(startup,()=>Check()); }
   finally
   {
    // Rebuilt panels must display the shared outcome, including failures from a detached panel.
@@ -33,7 +41,7 @@ public sealed class UpdatePanel : StackPanel
    progress.IsIndeterminate=false;check.IsEnabled=true;
   }
  }
- async Task Check(bool showAvailable)
+ async Task Check()
  {
   if(checking||installing)return;checking=true;check.IsEnabled=false;release=null;progress.IsIndeterminate=true;status.Text="Checking update";
   var stage=OtaCheckStage.TrustConfiguration;var installCallbackInvoked=false;
@@ -47,7 +55,9 @@ public sealed class UpdatePanel : StackPanel
    lastResult=(latest.Text,status.Text);
    stage=OtaCheckStage.CompanionSync;
    await Aion2UpdaterSync.ReconcileAsync(release,AppContext.BaseDirectory,cancellation.Token);
-   if(newer&&showAvailable){var dialog=new UpdateAvailableDialog(Installed,release,d=>{installCallbackInvoked=true;return Install(d);}){Owner=Window.GetWindow(this)};dialog.ShowDialog();}
+   // Updates install themselves: at startup and on every periodic check, a newer signed
+   // release downloads and applies without asking, then the updater relaunches the console.
+   if(newer){var dialog=new UpdateAvailableDialog(Installed,release,d=>{installCallbackInvoked=true;return Install(d);},forced:true){Owner=Window.GetWindow(this)};dialog.ShowDialog();}
   }
   catch(Exception ex){Hexor.Diagnostics.Log("ota",OtaCheckDiagnostics.Format(stage,ex,installCallbackInvoked),DiagnosticSeverity.Error);status.Text="Unable to check for updates. Hexor remains available; try again later.";latest.Text="Latest Version: Not available";lastResult=(latest.Text,status.Text);}
   finally{progress.IsIndeterminate=false;check.IsEnabled=true;checking=false;}
@@ -65,8 +75,8 @@ public sealed class UpdatePanel : StackPanel
    dialog.SetStage("Preparing installation","Validating the external updater and preparing a safe transaction…");
    var manifest=Path.Combine(root,"manifest.json");await File.WriteAllTextAsync(manifest,envelope,cancellation.Token);var helper=Path.Combine(root,"Hexor.Updater.exe");File.Copy(ResolveUpdaterHelper(),helper);
    dialog.SetStage("Installing","Hexor will close now. The updater will safely replace the verified files.");
-   var start=new ProcessStartInfo(helper){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=root};foreach(var arg in new[]{AppContext.BaseDirectory,manifest,package,Environment.ProcessId.ToString(),"exit"})start.ArgumentList.Add(arg);
-   _=Process.Start(start)??throw new IOException("Could not start Hexor updater.");Hexor.Diagnostics.Log("ota","installer-started; restart=false");dialog.CompleteAndClose();Hexor.App.RequestShutdown("ota-install");
+   var start=new ProcessStartInfo(helper){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=root};foreach(var arg in new[]{AppContext.BaseDirectory,manifest,package,Environment.ProcessId.ToString(),"restart"})start.ArgumentList.Add(arg);
+   _=Process.Start(start)??throw new IOException("Could not start Hexor updater.");Hexor.Diagnostics.Log("ota","installer-started; restart=true");dialog.CompleteAndClose();Hexor.App.RequestShutdown("ota-install");
   }
   catch(Exception ex){Hexor.Diagnostics.Log("ota","install-failed; type="+ex.GetType().Name);dialog.ShowFailure("Update could not be completed",SafeMessage(ex));}
   finally{installing=false;check.IsEnabled=true;}

@@ -280,34 +280,8 @@ internal static class RuntimeDisplayTests
         check(All<ComboBox>(window).Select(c=>c.Name).SequenceEqual(new[]{"CharacterRaceSelector","CharacterJobSelector"}),"Auto Task exposes the verified character-default selectors");
 
         Navigate(window,1,"Resource Grab",pump:false);
-        check(All<CheckBox>(window).Select(c=>c.DataContext).OfType<RegistryToggle>().Where(t=>t.Section=="ResourceGrab").Select(t=>t.Name).SequenceEqual(new[]{"AutoEnterAbyss","AbyssCounterAttack","GatherQualityFilterEnabled","GatherIgnoreAether","AuctionAutoSell"}),"Resource Grab exposes each verified Boolean exactly once");
-        foreach(var name in new[]{"GatherQualityFilterEnabled","GatherIgnoreAether"})
-        {
-            var toggle=All<CheckBox>(window).Single(c=>c.DataContext is RegistryToggle t&&t.Name==name);
-            toggle.IsChecked=true;window.UpdateLayout();
-            check(vm.Registry.Read("ResourceGrab",name)==1,"Actual resource toggle writes exact DWORD: "+name);
-            toggle.IsChecked=false;window.UpdateLayout();
-            check(vm.Registry.Read("ResourceGrab",name)==0,"Actual resource toggle persists OFF: "+name);
-        }
-        var gatheringList=Find<ItemsControl>(window,"GatheringResources")!;
-        var gatheringScroll=Find<ScrollViewer>(window,"GatheringResourceScroll")!;
-        check(gatheringList.Items.Count==24&&gatheringScroll.MaxHeight==320&&gatheringScroll.HorizontalScrollBarVisibility==ScrollBarVisibility.Disabled,"Gathering renders all 24 resources in a bounded scrollable panel");
-        var firstResource=All<CheckBox>(window).Single(c=>c.DataContext is GatheringResourceViewModel row&&row.Identifier=="隱藏背包");
-        var originalGathering=vm.Registry.ReadGathering();firstResource.IsChecked=false;window.UpdateLayout();
-        check(vm.Registry.ReadGathering().Targets.Value=="0"+originalGathering.Targets.Value![1..],"Actual gathering toggle changes only its own original Chinese flag entry");
-        firstResource.IsChecked=true;window.UpdateLayout();
-        check(vm.Registry.ReadGathering()==originalGathering,"Actual gathering toggle round-trips the saved Unicode REG_SZ exactly");
-        var qualityWhite=All<RadioButton>(window).Single(r=>r.Name=="GatherQualityWhite");
-        var qualityGreen=All<RadioButton>(window).Single(r=>r.Name=="GatherQualityGreen");
-        var qualityBlue=All<RadioButton>(window).Single(r=>r.Name=="GatherQualityBlue");
-        check(qualityWhite.Content.ToString()=="White"&&qualityGreen.Content.ToString()=="Green"&&qualityBlue.Content.ToString()=="Blue","Quality labels match the installed mappings");
-        qualityGreen.IsChecked=true;window.UpdateLayout();
-        Find<Button>(window,"ApplyGatherQualityLevel")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));window.UpdateLayout();
-        check(vm.Registry.Read("ResourceGrab","GatherQualityFilterLevel")==2,"Actual quality input and Apply button persist a verified numeric DWORD");
-        qualityWhite.IsChecked=true;Find<Button>(window,"ApplyGatherQualityLevel")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        gatheringScroll.BringIntoView();window.UpdateLayout();Pump();
-        check(gatheringScroll.ExtentWidth<=gatheringScroll.ViewportWidth+1&&gatheringScroll.ScrollableHeight>0,"Long English resource names wrap without horizontal overflow and all resources remain reachable");
-        CaptureFeature(window,"gathering-resources");
+        check(All<CheckBox>(window).Select(c=>c.DataContext).OfType<RegistryToggle>().Where(t=>t.Section=="ResourceGrab").Select(t=>t.Name).SequenceEqual(new[]{"AutoEnterAbyss","AbyssCounterAttack","AuctionAutoSell"}),"Resource Grab exposes each verified Boolean exactly once");
+        // The in-game Target Filter owns the gather list; the console no longer edits or seeds it.
         check(All<CheckBox>(window).Select(c=>c.DataContext).OfType<RegistryToggle>().Any(t=>t.Name=="AbyssCounterAttack"&&t.Label=="Attack Nearby Players")
             && All<CheckBox>(window).Select(c=>c.DataContext).OfType<RegistryToggle>().All(t=>t.Name!="GuardianLogoutAvoidance"),"Resource toggle labels match the release wording and the retired toggle is gone");
         check(!All<Button>(window).Any(b=>b.Content is "Show Updater")
@@ -316,7 +290,7 @@ internal static class RuntimeDisplayTests
         var enhancementSliders=All<Slider>(window).ToArray();var enhancementChecks=All<CheckBox>(window).ToArray();
         check(enhancementChecks.Count(c=>c.DataContext is RegistryToggle)==10
             && enhancementSliders.Any(s=>s.Name=="AutoEquipCombatPowerSlider"&&s.Minimum==1&&s.Maximum==100)
-            && enhancementSliders.Any(s=>s.Name=="AutoEnchantMaxPowerSlider"&&s.Minimum==1100&&s.Maximum==1500)
+            && enhancementSliders.Count()==1
             && vm.Toggles.Where(t=>t.Section=="Enhance").Select(t=>t.Name).OrderBy(n=>n).SequenceEqual(new[]{"AutoAwakenEnabled","AutoBuyOdEnergy","AutoBuyReviveStone","AutoDailyWaveEnabled","AutoDungeonQuickJoinEnabled","AutoNightmareEnabled","AutoOdMorphEnabled","CoinShopAbyssStigma","CoinShopFestivalDaevanion","CoinShopFestivalStigma","CoinShopNightmareDaevanion","CoinShopNightmareStigma","DestroyInsteadOfExtract","EnchantBoundKinahOnly","GenusInsightAutoAnalyze"}),
             "Enhancement renders independent verified caps and fifteen supported registry toggles");
         var mappedEnhancementNames=enhancementChecks.Select(c=>c.DataContext).OfType<RegistryToggle>().Select(t=>t.Name).ToArray();
@@ -332,8 +306,9 @@ internal static class RuntimeDisplayTests
 
         Navigate(window,2,"auto dungeon",pump:false);
         var dungeonFlowNames=new[]{"AutoDailyWaveEnabled","AutoNightmareEnabled","AutoAwakenEnabled","AutoOdMorphEnabled","AutoDungeonQuickJoinEnabled"};
-        check(All<CheckBox>(window).Select(c=>c.DataContext).OfType<RegistryToggle>().Select(t=>t.Name).SequenceEqual(dungeonFlowNames.Append("AutoDungeonUrugugu").ToArray()),"Auto Dungeon exposes the dungeon flow toggles exactly once");
-        foreach(var name in dungeonFlowNames.Append("AutoDungeonUrugugu"))
+        // The Uruguru Cave preference lives in the dungeon priority list; no duplicate toggle.
+        check(All<CheckBox>(window).Select(c=>c.DataContext).OfType<RegistryToggle>().Select(t=>t.Name).SequenceEqual(dungeonFlowNames.ToArray()),"Auto Dungeon exposes the dungeon flow toggles exactly once");
+        foreach(var name in dungeonFlowNames)
         {
             var toggle=All<CheckBox>(window).Single(c=>c.DataContext is RegistryToggle t&&t.Name==name);
             toggle.IsChecked=true;window.UpdateLayout();

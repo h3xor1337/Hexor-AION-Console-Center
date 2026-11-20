@@ -5,7 +5,7 @@ public static class AutomationCapabilities
 {
     public const string Connection = "Unavailable: no supported external automation interface configured.";
     public const string State = "Unknown — a running game does not prove automation is running.";
-    public const string Fallback = "Use the automation provider's existing in-game menu to start or stop supported activities, if available in your installation. Hexor does not send controls. Desktop workflow scheduling still requires provider integration.";
+    public const string Fallback = "Use the in-game menu (F10) to start or stop supported activities, or the Start/Stop, Start/Stop gathering, and Use-default-config buttons on the Daily Activities page, which send the game's own start, stop, and apply-default-config commands. Hexor never starts automation on its own. Desktop workflow scheduling still requires provider integration.";
     public const string Recovery = "Choose an existing configuration data root or its config folder, then Reload. If files are missing or invalid, restore a known-good backup or use the provider's supported setup/recovery procedure. Hexor leaves originals intact and does not fabricate compatible files. Reopen Hexor after recovery; unsaved drafts are not applied to the engine.";
     public static string SettingsEffect(int page) => page switch
     {

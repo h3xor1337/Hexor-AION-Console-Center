@@ -116,10 +116,10 @@ public interface IRegistrySettingsService
  bool DeleteRetired(string section,string name) => throw new NotSupportedException("Retired value removal is unavailable.");
  int ReadAppliedSchemaVersion() => 0;
  void WriteAppliedSchemaVersion(int version) { }
- GatheringRegistrySnapshot ReadGathering() => new(new(null,false,false),new(null,false,false));
  string? ReadString(string section,string name) => null;
- void WriteGatheringSelectionVerified(GatheringRegistrySnapshot expected,int targetIndex,bool enabled) => throw new NotSupportedException("Gathering settings are unavailable.");
- void WriteGatheringTargetsVerified(GatheringRegistrySnapshot expected,string targets) => throw new NotSupportedException("Gathering settings are unavailable.");
+ bool ReadGatherMigrationDone() => true;
+ void MarkGatherMigrationDone() { }
+ int DeleteGatherLegacyValues() => 0;
  DungeonRegistrySnapshot ReadDungeon() => new(new(null,false,false),new(null,false,true),new(null,false,true));
  void WriteDungeonPriorityVerified(IReadOnlyList<(int MapId,bool Enabled)> entries) => throw new NotSupportedException("Dungeon settings are unavailable.");
  IReadOnlyList<(int MapId,bool Enabled)> DungeonDefaults() => [(600001,true),(600032,true),(600031,true),(600012,false)];
@@ -177,6 +177,41 @@ public sealed partial class RegistrySettingsService(string root="Software\\Legio
  },changed=>changed,auditSink);
  public int ReadAppliedSchemaVersion(){using var hive=RegistryKey.OpenBaseKey(RegistryHive.CurrentUser,RegistryView.Registry64);using var key=hive.OpenSubKey(schemaStateRoot);return key?.GetValue("LegionCommanderSchemaVersion") is int value&&value>=0?value:0;}
  public void WriteAppliedSchemaVersion(int version){if(version<0)throw new InvalidDataException("Invalid registry schema version.");using var hive=RegistryKey.OpenBaseKey(RegistryHive.CurrentUser,RegistryView.Registry64);using var key=hive.CreateSubKey(schemaStateRoot);if(key.GetValue("LegionCommanderSchemaVersion") is int value&&value==version)return;key.SetValue("LegionCommanderSchemaVersion",version,RegistryValueKind.DWord);}
+ // One-time migration: the stale legacy gather list in ResourceGrab (written by older module
+ // builds and older Hexor releases) was part of the gathering-filter wipe cycle. Removing it
+ // once lets the game module rebuild its own defaults, the same way its Reset Default does.
+ // Runs exactly once per installation: values the vendor console saves afterwards are never
+ // touched again.
+ static readonly string[] GatherLegacyValues=["GatherTargets","GatherTargetNames","GatherQualityFilterEnabled","GatherQualityFilterLevel","GatherIgnoreAether"];
+ public bool ReadGatherMigrationDone(){using var hive=RegistryKey.OpenBaseKey(RegistryHive.CurrentUser,RegistryView.Registry64);using var key=hive.OpenSubKey(schemaStateRoot);return key?.GetValue("GatherRegistryMigrated") is int value&&value==1;}
+ public void MarkGatherMigrationDone(){using var hive=RegistryKey.OpenBaseKey(RegistryHive.CurrentUser,RegistryView.Registry64);using var key=hive.CreateSubKey(schemaStateRoot);key.SetValue("GatherRegistryMigrated",1,RegistryValueKind.DWord);}
+ public int DeleteGatherLegacyValues()
+ {
+  var removed=0;
+  using var hive=RegistryKey.OpenBaseKey(RegistryHive.CurrentUser,RegistryView.Registry64);
+  using var key=hive.OpenSubKey(root+"\\ResourceGrab",writable:true);
+  if(key==null)return 0;
+  var backup=new List<(string Name,string Text)>();
+  foreach(var name in GatherLegacyValues)
+  {
+   if(!key.GetValueNames().Contains(name,StringComparer.OrdinalIgnoreCase))continue;
+   var text=key.GetValueKind(name)!=RegistryValueKind.String?null:key.GetValue(name,null,RegistryValueOptions.DoNotExpandEnvironmentNames) as string;
+   if(text is {Length:>0})backup.Add((name,text));
+   key.DeleteValue(name,false);
+   removed++;
+  }
+  if(backup.Count>0)
+  {
+   try
+   {
+    Directory.CreateDirectory(Hexor.Diagnostics.Root);
+    var path=Path.Combine(Hexor.Diagnostics.Root,"GatherRegistryBackup-"+DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss")+".json");
+    File.WriteAllText(path,System.Text.Json.JsonSerializer.Serialize(backup.Select(pair=>new{pair.Name,pair.Text}),new System.Text.Json.JsonSerializerOptions{WriteIndented=true}));
+   }
+   catch(Exception e) when(e is IOException or UnauthorizedAccessException){Hexor.Diagnostics.Log("registry-synchronization","gather-backup-failed; type="+e.GetType().Name,DiagnosticSeverity.Warning);}
+  }
+  return removed;
+ }
  public int? Read(string section,string name)=>Inspect(section,name).Value;
  public string? ReadString(string section,string name)
  {

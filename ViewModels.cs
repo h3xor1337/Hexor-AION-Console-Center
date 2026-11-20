@@ -108,7 +108,6 @@ public sealed class MainViewModel : Observable, IDisposable
     public bool CanControlAutomation => false;
     public IJsonConfigurationService Json { get; }
     public IRegistrySettingsService Registry { get; }
-    public GatheringSettingsViewModel Gathering { get; }
     public Preferences Preferences { get; }
     public ObservableCollection<RegistryToggle> Toggles { get; } = [];
     private int auctionPriceMode = -1;
@@ -374,9 +373,7 @@ public sealed class MainViewModel : Observable, IDisposable
     public string WorkMax { get; set; }
     public string RestMin { get; set; }
     public string RestMax { get; set; }
-    private string enhanceCap = "1400";
-    public string EnhanceCap { get => enhanceCap; set => Set(ref enhanceCap, value); }
-    public string CurrentCap { get; private set; } = "Default 1400 (not written)";
+
     private string upgradeMaxBattlePowerK = "100";
     public string UpgradeMaxBattlePowerK { get => upgradeMaxBattlePowerK; set => Set(ref upgradeMaxBattlePowerK, value); }
     public string CurrentUpgradeMaxBattlePowerK { get; private set; } = "Default 100K (not written)";
@@ -721,6 +718,91 @@ public sealed class MainViewModel : Observable, IDisposable
         RebuildGameIpcUi();
     }
 
+    // Operator-initiated task sequence controls: the same commands the in-game menu and the
+    // vendor console send (StartAutoTask / StopAll), addressed to the connected game session.
+    public GameSessionSnapshot? ConnectedGameSession() =>
+        gameIpc.Sessions().FirstOrDefault(s => s.ClientConnected && s.PipeOwnedByHexor);
+
+    public async Task StartDailySequenceAsync()
+    {
+        var session = ConnectedGameSession();
+        if (session == null)
+        {
+            Status = "Start AION2 first — the task sequence runs inside the game.";
+            return;
+        }
+        try
+        {
+            await gameIpc.SendCommandAsync(session.ProcessId, "StartAutoTask");
+            Status = $"Task sequence started for the game session on PID {session.ProcessId}.";
+            Diagnostics.Log("daily-sequence", "started; pid=" + session.ProcessId);
+        }
+        catch (Exception e) { Status = $"Starting the task sequence failed ({e.GetType().Name})."; Diagnostics.Log("daily-sequence", "start-failed; type=" + e.GetType().Name); }
+        RebuildGameIpcUi();
+    }
+
+    public async Task StopDailySequenceAsync()
+    {
+        var session = ConnectedGameSession();
+        if (session == null)
+        {
+            Status = "No connected game session — nothing to stop.";
+            return;
+        }
+        try
+        {
+            await gameIpc.SendCommandAsync(session.ProcessId, "StopAll");
+            Status = $"Task sequence stopped for the game session on PID {session.ProcessId}.";
+            Diagnostics.Log("daily-sequence", "stopped; pid=" + session.ProcessId);
+        }
+        catch (Exception e) { Status = $"Stopping the task sequence failed ({e.GetType().Name})."; Diagnostics.Log("daily-sequence", "stop-failed; type=" + e.GetType().Name); }
+        RebuildGameIpcUi();
+    }
+
+    // Vendor-parity gathering controls. The module ignores StartGather while AutoTask is
+    // running and below level 45, so stop the task sequence first, then start gathering.
+    public async Task StartGatheringAsync()
+    {
+        var session = ConnectedGameSession();
+        if (session == null)
+        {
+            Status = "Start AION2 first — gathering runs inside the game.";
+            return;
+        }
+        try
+        {
+            if (session.IsAutoTask)
+            {
+                await gameIpc.SendCommandAsync(session.ProcessId, "StopAll");
+                Diagnostics.Log("gather-control", "auto-task-stopped-before-gather; pid=" + session.ProcessId);
+                await Task.Delay(500);
+            }
+            await gameIpc.SendCommandAsync(session.ProcessId, "StartGather");
+            Status = $"Gathering started for the game session on PID {session.ProcessId}.";
+            Diagnostics.Log("gather-control", "started; pid=" + session.ProcessId);
+        }
+        catch (Exception e) { Status = $"Starting gathering failed ({e.GetType().Name})."; Diagnostics.Log("gather-control", "start-failed; type=" + e.GetType().Name); }
+        RebuildGameIpcUi();
+    }
+
+    public async Task StopGatheringAsync()
+    {
+        var session = ConnectedGameSession();
+        if (session == null)
+        {
+            Status = "No connected game session — nothing to stop.";
+            return;
+        }
+        try
+        {
+            await gameIpc.SendCommandAsync(session.ProcessId, "StopGather");
+            Status = $"Gathering stopped for the game session on PID {session.ProcessId}.";
+            Diagnostics.Log("gather-control", "stopped; pid=" + session.ProcessId);
+        }
+        catch (Exception e) { Status = $"Stopping gathering failed ({e.GetType().Name})."; Diagnostics.Log("gather-control", "stop-failed; type=" + e.GetType().Name); }
+        RebuildGameIpcUi();
+    }
+
     public async Task GameRefreshAsync(int processId)
     {
         try
@@ -776,7 +858,6 @@ public sealed class MainViewModel : Observable, IDisposable
         UpdateCaptchaAutoStatus();
         Json = json ?? new JsonConfigurationService(Path.Combine(Diagnostics.Root, "preferences.json"), new SettingsBackupService());
         Registry = registry ?? new RegistrySettingsService();
-        Gathering = new(Registry, message => Status = message);
         try
         {
             Preferences = Json.Load();
@@ -909,7 +990,6 @@ public sealed class MainViewModel : Observable, IDisposable
     public void ReloadRegistry()
     {
         foreach (var toggle in Toggles) toggle.Reload();
-        Gathering.Reload();
         ReloadResourceSettings();
         Changed(nameof(DiagnosticsSettingDetails));
         try
@@ -923,24 +1003,11 @@ public sealed class MainViewModel : Observable, IDisposable
             RegistryCharacterJob = Identity("CharacterJob");
             RawClass = OriginalConfigurationReady ? session!.Document.Value("AutoTask_Job") ?? Registry.Read("AutoTask", "CharacterJob")?.ToString() ?? "Default 1" : Registry.Read("AutoTask", "CharacterJob")?.ToString() ?? "Missing";
             RawRace = OriginalConfigurationReady ? session!.Document.Value("AutoTask_Race") ?? Registry.Read("AutoTask", "CharacterRace")?.ToString() ?? "Default 2" : Registry.Read("AutoTask", "CharacterRace")?.ToString() ?? "Missing";
-            var cap = Registry.Inspect("Enhance", "AutoEnchantMaxPower");
-            CurrentCap = cap.Value?.ToString() ?? (cap.Exists ? "Unsupported type preserved" : "Default 1400 (not written)");
-            EnhanceCap = Math.Clamp(cap.Value ?? 1400, 1100, 1500).ToString(); Changed(string.Empty);
             var battlePower = Registry.Inspect("Enhance", "AutoUpgradeMaxBattlePowerK");
             CurrentUpgradeMaxBattlePowerK = battlePower.Value?.ToString() ?? (battlePower.Exists ? "Unsupported type preserved" : "Default 100K (not written)");
             UpgradeMaxBattlePowerK = Math.Clamp(battlePower.Value ?? 100, 1, 100).ToString(); Changed(string.Empty);
         }
         catch (Exception e) { Status = "Registry unavailable (" + e.GetType().Name + ")."; }
-    }
-    public void SaveCap()
-    {
-        if (!int.TryParse(EnhanceCap, out var cap) || cap < 1100 || cap > 1500) { Status = "Gear cap must be 1100–1500."; return; }
-        try
-        {
-            if (Registry.Read("Enhance", "AutoEnchantMaxPower") == cap) { Status = "Gear cap is unchanged; no registry write was made."; return; }
-            Registry.WriteVerified("Enhance", "AutoEnchantMaxPower", cap); CurrentCap = cap.ToString(); Changed(nameof(CurrentCap)); Status = "Gear cap saved and read back successfully.";
-        }
-        catch (Exception e) { Status = "Cap was not saved (" + e.GetType().Name + ")."; }
     }
     public void SaveUpgradeMaxBattlePowerK()
     {
@@ -1178,6 +1245,43 @@ public sealed class MainViewModel : Observable, IDisposable
     // The game's own menu can rewrite a group document with stale values; re-assert Hexor's
     // registry truth on startup and once a minute so disabled shop options stay disabled.
     private DateTimeOffset lastSharedReconcile = DateTimeOffset.MinValue;
+    private DateTimeOffset lastSettingsSweep = DateTimeOffset.MinValue;
+    // The module keeps per-character settings (GatherConfig.targetNames) in its own memory and
+    // re-saves them; repairing the file alone is undone by the next save. When a repair lands
+    // while the game is connected, the same "apply default config" command the vendor console
+    // sends makes the module reload the settings into its running state machines.
+    private async Task SweepCharacterSettingsAsync()
+    {
+        if (!Runtime.CharacterSettingsRepairService.LiveSweepEnabled) return;
+        if (DateTimeOffset.UtcNow - lastSettingsSweep < TimeSpan.FromMinutes(2)) return;
+        lastSettingsSweep = DateTimeOffset.UtcNow;
+        try
+        {
+            var (repaired, seeded) = Runtime.CharacterSettingsRepairService.Sweep();
+            if (repaired > 0 || seeded > 0)
+                Diagnostics.Log("settings-repair", $"sweep-completed; repaired={repaired}; seeded={seeded}");
+        }
+        catch (Exception e) { Diagnostics.Log("settings-repair", "sweep-error; type=" + e.GetType().Name); }
+    }
+
+    // Vendor-parity control: the module replaces the current character config with the saved
+    // default and reloads its machines. Operator-initiated only — applying makes the module
+    // save the reloaded config right away, so Hexor never sends it on its own.
+    public async Task ApplyDefaultConfigAsync(int processId)
+    {
+        try
+        {
+            await gameIpc.SendCommandAsync(processId, "ApplyDefaultConfig");
+            Status = $"Default config applied for the game session on PID {processId}.";
+            Diagnostics.Log("settings-repair", $"applied-default; pid={processId}; mode=manual");
+        }
+        catch (Exception e)
+        {
+            Status = $"Applying the default config failed ({e.GetType().Name}).";
+            Diagnostics.Log("settings-repair", $"apply-default-failed; pid={processId}; type={e.GetType().Name}");
+        }
+        RebuildGameIpcUi();
+    }
     public void ReconcileSharedSettings()
     {
         if (DateTimeOffset.UtcNow - lastSharedReconcile < TimeSpan.FromMinutes(1)) return;
@@ -1190,6 +1294,7 @@ public sealed class MainViewModel : Observable, IDisposable
     {
         if (pollingCaptcha || lifetime.IsCancellationRequested) return;
         ReconcileSharedSettings();
+        await SweepCharacterSettingsAsync();
         pollingCaptcha = true;
         try
         {

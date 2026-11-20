@@ -31,7 +31,6 @@ public static class LegionCommanderRegistrySchema
         Bool("AutoTask", "ClearSideQuestsBeforeDungeon", "Auto Task / Clear side quests"),
         Bool("AutoTask", "ExploreCavesBeforeDungeon", "Auto Task / Explore caves"),
         Bool("AutoTask", "SwitchToGatherAfterTasks", "Auto Task / Switch to gathering"),
-        Number("Enhance", "AutoEnchantMaxPower", 1500, 1100, 1500, "Character Enhancement / Gear enhancement level"),
         Bool("Enhance", "AutoBuyOdEnergy", "Membership Benefits / Buy Od Energy"),
         Bool("Enhance", "AutoBuyReviveStone", "Membership Benefits / Buy Resurrection Stones"),
         Bool("Enhance", "AutoDungeonQuickJoinEnabled", "Auto Dungeon / Quick Join"),
@@ -52,9 +51,6 @@ public static class LegionCommanderRegistrySchema
         Bool("Enhance", "CoinShopFestivalStigma", "Shop Exchange / Buy Stigma items with Festival coins"),
         Bool("Enhance", "CoinShopAbyssStigma", "Shop Exchange / Buy Stigma items with Abyss coins"),
         Bool("ResourceGrab", "AutoDungeonUrugugu", "Auto Dungeon / Prefer Urugugu"),
-        Bool("ResourceGrab", "GatherIgnoreAether", "Resource Gathering / Ignore Aether"),
-        Bool("ResourceGrab", "GatherQualityFilterEnabled", "Resource Gathering / Quality filter"),
-        Number("ResourceGrab", "GatherQualityFilterLevel", 1, 1, 99, "Resource Gathering / Quality filter level"),
         Bool("MiniGame", "AutoEnter", "Mini Games / Auto Enter"),
         Bool("MiniGame", "UseTaiwanVillageRules", "Mini Games / Taiwan village rules"),
         Bool("ResourceGrab", "AutoEnterAbyss", "Resource Gathering / Enter Abyss"),
@@ -157,6 +153,17 @@ public sealed class RegistryInitializationService(IRegistrySettingsService regis
                 { errors++; issues.Add(label + ": removal failed (" + e.GetType().Name + ")."); Diagnostics.Log("registry-synchronization", "retired-removal-failure; setting=" + label + "; type=" + e.GetType().Name, DiagnosticSeverity.Error); }
             }
             RebuildRetiredSharedGroups(registry);
+            try
+            {
+                if (!registry.ReadGatherMigrationDone())
+                {
+                    var removed = registry.DeleteGatherLegacyValues();
+                    registry.MarkGatherMigrationDone();
+                    Diagnostics.Log("registry-synchronization", $"gather-registry-migrated; removed={removed}; effect=game-module-rebuilds-defaults");
+                }
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException or InvalidOperationException or NotSupportedException)
+            { errors++; issues.Add("Legacy gather registry migration failed (" + e.GetType().Name + ")."); Diagnostics.Log("registry-synchronization", "gather-migration-failure; type=" + e.GetType().Name, DiagnosticSeverity.Error); }
             if (errors == 0)
             {
                 try { registry.WriteAppliedSchemaVersion(LegionCommanderRegistrySchema.Version); }
