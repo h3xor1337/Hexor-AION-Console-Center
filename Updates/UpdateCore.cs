@@ -127,7 +127,7 @@ public static class UpdateCore
  // Internal seam keeps deterministic transport tests off the network; production always uses ConnectPublic.
  internal static async Task DownloadWithHandler(string url,string destination,long limit,HttpMessageHandler handler,IProgress<DownloadProgress>? progress=null,CancellationToken token=default)
  {
-  using var client=new HttpClient(handler){Timeout=Timeout.InfiniteTimeSpan};using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);deadline.CancelAfter(TimeSpan.FromMinutes(15));var ct=deadline.Token;
+  using var client=new HttpClient(handler){Timeout=Timeout.InfiniteTimeSpan};using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);deadline.CancelAfter(TimeSpan.FromMinutes(60));var ct=deadline.Token;
   ct.ThrowIfCancellationRequested();if(limit<1)throw new ArgumentOutOfRangeException(nameof(limit));var uri=ValidateGitHubUrl(url,false);
   for(int redirects=0;;redirects++)
   {

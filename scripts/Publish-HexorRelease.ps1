@@ -61,7 +61,7 @@ try{
  $stampPath=Join-Path $root '.build\updater-stamp.json'
  $stamp=$null;if(Test-Path -LiteralPath $stampPath){try{$stamp=Get-Content -Raw -LiteralPath $stampPath | ConvertFrom-Json}catch{}}
  $updaterChanged=(-not $stamp)-or($stamp.SourceHash -cne $updaterFingerprint)
- $updaterVersion=if($updaterChanged){$Version}else{$stamp.Version}
+ $updaterVersion=$Version
  $updaterExe=Join-Path $payload 'Hexor.Updater.exe'
  $updaterHash=(Get-FileHash -LiteralPath $updaterExe -Algorithm SHA256).Hash.ToLowerInvariant()
  $includeUpdater=$updaterChanged-or($stamp.ExeSha256 -cne $updaterHash)
