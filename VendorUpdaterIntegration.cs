@@ -83,6 +83,17 @@ public static class VendorUpdaterInstallation
         return new(null, "Original updater is unavailable. Expected AION Auto Updater beside Hexor Control Center or in this user's LocalAppData Programs folder.");
     }
 
+    // Resolves the ownership manifest beside the resolved updater instead of beside the running
+    // console binary: a debug or portable build elsewhere on disk must still find the installed
+    // evidence. Falls back to the legacy sibling-folder layout when the updater is unavailable.
+    public static string? OwnershipManifestPath(string? applicationBaseDirectory = null, string? localApplicationData = null)
+    {
+        var updater = Resolve(applicationBaseDirectory, localApplicationData).ExecutablePath;
+        if (updater != null) return Path.Combine(Path.GetDirectoryName(updater)!, VendorOverlayCleanupService.ManifestName);
+        var parent = AppLayout.InstallParent();
+        return parent == null ? null : Path.Combine(parent, UpdaterFolder, VendorOverlayCleanupService.ManifestName);
+    }
+
     private static string? ResolveUnderRoot(string? root, string? expectedControlCenterDirectory)
     {
         if (string.IsNullOrWhiteSpace(root)) return null;

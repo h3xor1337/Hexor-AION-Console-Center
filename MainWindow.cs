@@ -286,7 +286,7 @@ public sealed class MainWindow : Window
   support.Children.Add(supportButtons);
  }
   private static void OpenPath(string path){try{if(path==Diagnostics.ActiveLogPath&&!System.IO.File.Exists(path))Diagnostics.Log("diagnostics","active-log-created");System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path){UseShellExecute=true});}catch(Exception e) when(e is System.IO.IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception){Diagnostics.Log("diagnostics","open-failed; type="+e.GetType().Name);}}
-  private string MenuManifestPath(){var parent=AppLayout.InstallParent();return parent==null?"":System.IO.Path.Combine(parent,"AION Auto Updater",VendorOverlayCleanupService.ManifestName);}
+  private string MenuManifestPath()=>VendorUpdaterInstallation.OwnershipManifestPath()??"";
   private IReadOnlyList<AionInstallation> MenuInstallations()
   {
    var discovery=new AionInstallationDiscoveryService();var found=discovery.DiscoverFromSteamLibraries(discovery.ReadSteamLibraries()).ToList();
@@ -369,7 +369,7 @@ public sealed class MainWindow : Window
  {
   var executable=Model.Detection.ExecutablePath;
   var root=AppLayout.InstallParent();
-  var manifest=root==null?"":System.IO.Path.Combine(root,"AION Auto Updater",VendorOverlayCleanupService.ManifestName);
+  var manifest=VendorUpdaterInstallation.OwnershipManifestPath()??"";
   var service=new VendorOverlayCleanupService();var inspection=service.Inspect(executable??"",manifest);
   if(inspection.State!=VendorOverlayCleanupState.Skipped||!inspection.Message.StartsWith("Verified",StringComparison.Ordinal)) {MessageBox.Show(this,inspection.Message,"Optional AION overlay cleanup",MessageBoxButton.OK,MessageBoxImage.Information);return;}
   if(MessageBox.Show(this,$"{inspection.Message}\n\nTarget:\n{inspection.TargetPath}\n\nOnly this exact verified file will be changed. Continue?","Optional AION overlay cleanup",MessageBoxButton.YesNo,MessageBoxImage.Warning)!=MessageBoxResult.Yes)return;

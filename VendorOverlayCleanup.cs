@@ -23,8 +23,61 @@ public sealed class VendorOverlayCleanupService
         if (target == null) return new(VendorOverlayCleanupState.CouldNotVerify, "", "A verified AION2 Win64 installation path is required.");
         if (!File.Exists(target)) return new(VendorOverlayCleanupState.Skipped, target, "No dxgi.dll exists at the verified AION2 Win64 path.");
         if (!TryReadManifest(manifestPath, out var manifest, out var reason) || !Matches(target, manifest!, out reason))
-            return new(VendorOverlayCleanupState.CouldNotVerify, target, reason);
+        {
+            if (!TryRefreshModuleEvidence(manifestPath, manifest!, target, reason))
+                return new(VendorOverlayCleanupState.CouldNotVerify, target, reason);
+        }
         return new(VendorOverlayCleanupState.Skipped, target, manifest!.OriginalBackupPath == null ? "Verified vendor dxgi.dll can be removed." : "Verified vendor dxgi.dll can be replaced with its verified original backup.");
+    }
+
+    // The reviewed companion updater (Aion2.Updater.exe) is the component that installs the menu
+    // module into the game, and the vendor ships module updates regularly. When only the module
+    // hash drifted while the recorded updater evidence still verifies, the change is a routine
+    // vendor module update and the recorded hash is refreshed; without this every vendor update
+    // would leave the menu status on Verification required until the evidence was rewritten by hand.
+    // Every other uncertainty (missing or stale updater evidence, wrong installation, reparse point,
+    // invalid manifest) still reports CouldNotVerify.
+    private static bool TryRefreshModuleEvidence(string manifestPath, VendorOverlayOwnershipManifest manifest, string target, string reason)
+    {
+        if (reason != "dxgi.dll does not match the recorded vendor hash; it was retained.") return false;
+        try
+        {
+            if ((File.GetAttributes(target) & FileAttributes.ReparsePoint) != 0) return false;
+            if (string.IsNullOrWhiteSpace(manifest.UpdaterExecutablePath) ||
+                !Path.GetFileName(manifest.UpdaterExecutablePath).Equals(VendorUpdaterManager.ExecutableName, StringComparison.OrdinalIgnoreCase) ||
+                !File.Exists(manifest.UpdaterExecutablePath) ||
+                string.IsNullOrWhiteSpace(manifest.UpdaterSha256) ||
+                !Hash(manifest.UpdaterExecutablePath).Equals(manifest.UpdaterSha256, StringComparison.OrdinalIgnoreCase)) return false;
+            var refreshed = manifest with { InstallationDirectory = Path.GetDirectoryName(target)!, DxgiSha256 = Hash(target) };
+            File.WriteAllText(manifestPath, JsonSerializer.Serialize(refreshed, new JsonSerializerOptions { WriteIndented = true }));
+            Diagnostics.Log("menu-status", "module-evidence-refresh; reason=vendor-module-update; dxgi=" + refreshed.DxgiSha256[..12].ToLowerInvariant());
+            return true;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Diagnostics.Log("menu-status", "module-evidence-refresh-failed; type=" + e.GetType().Name);
+            return false;
+        }
+    }
+
+    // Called by the companion updater sync after it installed a verified release: the recorded
+    // updater evidence is refreshed so ownership verification follows the signed OTA chain.
+    public static void RefreshUpdaterEvidence(string manifestPath, string updaterExecutablePath)
+    {
+        try
+        {
+            if (!File.Exists(manifestPath) || !File.Exists(updaterExecutablePath)) return;
+            var manifest = JsonSerializer.Deserialize<VendorOverlayOwnershipManifest>(File.ReadAllText(manifestPath));
+            if (manifest == null) return;
+            var refreshed = manifest with { UpdaterExecutablePath = Path.GetFullPath(updaterExecutablePath), UpdaterSha256 = Hash(updaterExecutablePath) };
+            if (refreshed == manifest) return;
+            File.WriteAllText(manifestPath, JsonSerializer.Serialize(refreshed, new JsonSerializerOptions { WriteIndented = true }));
+            Diagnostics.Log("menu-status", "updater-evidence-refresh; updater=" + refreshed.UpdaterSha256[..12].ToLowerInvariant());
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException)
+        {
+            Diagnostics.Log("menu-status", "updater-evidence-refresh-failed; type=" + e.GetType().Name);
+        }
     }
 
     public VendorOverlayCleanupResult Execute(string gameExecutablePath, string manifestPath)

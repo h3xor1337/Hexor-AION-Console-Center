@@ -21,8 +21,13 @@ internal static class MenuStatusTests
         var running = new MenuStatusService(new VendorOverlayCleanupService(_ => false), () => true);
         assert(running.Check([first], manifest).State == MenuStatusState.GameRunning, "Detected menu reports Game running while AION2 is active");
 
+        // Uncertain updater evidence (changed updater on disk) keeps a drifted module unverified;
+        // with verified updater evidence the drift is a routine vendor module update and heals.
         File.WriteAllText(first.OverlayPath, "changed-unrelated-dll");
+        File.WriteAllText(updater, "changed-updater-fixture");
         assert(service.Check([first], manifest).State == MenuStatusState.VerificationRequired, "Changed or uncertain DLL ownership reports Verification required");
+        File.WriteAllText(updater, "reviewed-updater");
+        assert(service.Check([first], manifest).State == MenuStatusState.MenuDetected, "A drifted module beside verified updater evidence refreshes ownership and reports Menu detected");
         WriteManifest(manifest, first, updater);
         var second = CreateInstallation(fixture, "two", withMenu: true);
         assert(service.Check([first, second], manifest).State == MenuStatusState.MultipleInstallations, "Multiple verified installations require customer selection");

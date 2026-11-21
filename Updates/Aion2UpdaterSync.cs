@@ -35,6 +35,10 @@ public static class Aion2UpdaterSync
     var stage=Path.Combine(root,"stage");UpdateCore.StageAion2Updater(package,stage);
     UpdateCore.InstallAion2Updater(target,Path.Combine(stage,UpdateCore.Aion2UpdaterEntry));
     await File.WriteAllTextAsync(stamp,expected,token);
+    // Keep ownership verification in step with the signed companion: the recorded updater
+    // evidence is refreshed so the menu-status card never reports an uncertain updater
+    // after a routine signed release.
+    VendorOverlayCleanupService.RefreshUpdaterEvidence(Path.Combine(Path.GetDirectoryName(target)!,VendorOverlayCleanupService.ManifestName),target);
     Log("companion-updater-installed");
    }
    finally
