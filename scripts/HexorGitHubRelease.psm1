@@ -188,7 +188,7 @@ function Publish-HexorGitHubRelease {
     $manifestBytes = [IO.File]::ReadAllBytes($manifestPath)
     $manifest = Read-HexorSignedManifest -Bytes $manifestBytes -PublicKeyPem $trust.PublicKeyPem
     if ($manifest.Version -cne $Version -or $manifest.DownloadUrl -cne $config.DownloadUrl) { throw 'Prepared manifest version or DownloadUrl does not match the approved GitHub release.' }
-    $names = @("Hexor-$Version-win-x64.zip", 'latest.json', 'SHA256SUMS.txt', 'RELEASE-NOTES.md', "Hexor-Aion2-Updater-$Version-win-x64.zip")
+    $names = @("Hexor-$Version-win-x64.zip", 'latest.json', 'SHA256SUMS.txt', 'RELEASE-NOTES.md', "Hexor-Aion2-Updater-$Version-win-x64.zip", "Hexor-$Version-light-win-x64.zip")
     $files = @($names | ForEach-Object {
         $path = Join-Path $ReleaseDirectory $_
         $item = Get-Item -LiteralPath $path -ErrorAction Stop
@@ -201,6 +201,12 @@ function Publish-HexorGitHubRelease {
         $companion = $files | Where-Object Name -eq "Hexor-Aion2-Updater-$Version-win-x64.zip"
         if (-not $companion) { throw 'Signed manifest advertises the companion updater but the asset is missing.' }
         if ($companion.Hash -cne $manifest.Aion2UpdaterSha256.ToLowerInvariant()) { throw 'Companion updater package does not match the signed SHA-256 digest.' }
+    }
+    $lightHashProperty = $manifest.PSObject.Properties['LightSha256']
+    if ($lightHashProperty -and $lightHashProperty.Value) {
+        $light = $files | Where-Object Name -eq "Hexor-$Version-light-win-x64.zip"
+        if (-not $light) { throw 'Signed manifest advertises the light package but the asset is missing.' }
+        if ($light.Hash -cne $manifest.LightSha256.ToLowerInvariant()) { throw 'Light package does not match the signed SHA-256 digest.' }
     }
     $checksumLines = [IO.File]::ReadAllText($files[2].Path).Trim() -split "\r?\n"
     foreach ($zip in @($files | Where-Object Name -like '*.zip')) {

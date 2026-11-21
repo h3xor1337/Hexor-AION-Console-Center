@@ -108,12 +108,24 @@ try{
  }finally{$companionEntries.Dispose()}
  $hash=(Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant()
  $companionHash=(Get-FileHash -LiteralPath $companionZip -Algorithm SHA256).Hash.ToLowerInvariant()
+ # Light package: console only. Consoles whose helper understands partial installs
+ # (helper version >= LightMinUpdaterVersion) download this instead of the full package.
+ $lightZip=Join-Path $out "Hexor-$Version-light-win-x64.zip"
+ Compress-Archive -LiteralPath (@($files | Where-Object Name -eq 'Hexor-AION-Control-Center.exe').FullName) -DestinationPath $lightZip
+ $lightEntries=[IO.Compression.ZipFile]::OpenRead($lightZip)
+ try{
+  if($lightEntries.Entries.Count -ne 1 -or $lightEntries.Entries[0].FullName -cne 'Hexor-AION-Control-Center.exe'){throw 'Light archive must contain exactly the console executable'}
+  $lightStream=$lightEntries.Entries[0].Open();$lightMagic=@($lightStream.ReadByte(),$lightStream.ReadByte());$lightStream.Dispose()
+  if($lightMagic[0] -ne 77 -or $lightMagic[1] -ne 90){throw 'Light archive entry is not an executable'}
+ }finally{$lightEntries.Dispose()}
+ $lightHash=(Get-FileHash -LiteralPath $lightZip -Algorithm SHA256).Hash.ToLowerInvariant()
+ $lightUrl="https://github.com/$($github.Repository)/releases/download/v$Version/Hexor-$Version-light-win-x64.zip"
  $companionUrl="https://github.com/$($github.Repository)/releases/download/v$Version/Hexor-Aion2-Updater-$Version-win-x64.zip"
- $manifest=[ordered]@{SchemaVersion=1;Version=$Version;ReleaseDate=[DateTimeOffset]::UtcNow.ToString('O');DownloadUrl=$DownloadUrl;Sha256=$hash;ReleaseNotes=$notes;MinimumUpdaterVersion='1.0.0';Mandatory=[bool]$Mandatory;Aion2UpdaterUrl=$companionUrl;Aion2UpdaterSha256=$companionHash}
+ $manifest=[ordered]@{SchemaVersion=1;Version=$Version;ReleaseDate=[DateTimeOffset]::UtcNow.ToString('O');DownloadUrl=$DownloadUrl;Sha256=$hash;ReleaseNotes=$notes;MinimumUpdaterVersion='1.0.0';Mandatory=[bool]$Mandatory;Aion2UpdaterUrl=$companionUrl;Aion2UpdaterSha256=$companionHash;LightDownloadUrl=$lightUrl;LightSha256=$lightHash;LightMinUpdaterVersion=$Version}
  $bytes=[Text.Encoding]::UTF8.GetBytes(($manifest | ConvertTo-Json -Compress))
  $signature=$rsa.SignData($bytes,[Security.Cryptography.HashAlgorithmName]::SHA256,[Security.Cryptography.RSASignaturePadding]::Pss)
  @{Payload=[Convert]::ToBase64String($bytes);Signature=[Convert]::ToBase64String($signature)} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $out 'latest.json') -Encoding utf8
- "$hash  $([IO.Path]::GetFileName($package))`n$companionHash  $([IO.Path]::GetFileName($companionZip))" | Set-Content -LiteralPath (Join-Path $out 'SHA256SUMS.txt')
+ "$hash  $([IO.Path]::GetFileName($package))`n$companionHash  $([IO.Path]::GetFileName($companionZip))`n$lightHash  $([IO.Path]::GetFileName($lightZip))" | Set-Content -LiteralPath (Join-Path $out 'SHA256SUMS.txt')
  $notes | Set-Content -LiteralPath (Join-Path $out 'RELEASE-NOTES.md')
  if($Version -ceq '1.0.14'){
   & (Join-Path $PSScriptRoot 'Test-HexorConsoleRelease.ps1') -Phase Package -ReleaseDirectory $out -ResultDirectory (Join-Path $root ('.build/package-gate-'+[guid]::NewGuid().ToString('N')))
