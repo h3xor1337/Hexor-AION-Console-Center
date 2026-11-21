@@ -8,7 +8,11 @@ using System.Windows.Controls;
 namespace Hexor.Updates;
 public sealed class UpdatePanel : StackPanel
 {
- static UpdatePanel()=>Aion2UpdaterSync.LogSink=message=>Hexor.Diagnostics.Log("ota",message);
+ static UpdatePanel()
+ {
+  Aion2UpdaterSync.LogSink=message=>Hexor.Diagnostics.Log("ota",message);
+  VendorOverlayCleanupService.LogSink=message=>Hexor.Diagnostics.Log("menu-status",message);
+ }
  readonly TextBlock current=new(),latest=new(){Text="Latest Version: Checking…"},status=new(){Text="Checking update",TextWrapping=TextWrapping.Wrap};
  readonly ProgressBar progress=new(){Height=8,Margin=new Thickness(0,8,0,8),IsIndeterminate=true};
  readonly Button check=new(){Content="Check for Updates"};

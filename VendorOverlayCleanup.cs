@@ -14,6 +14,11 @@ public sealed record VendorOverlayOwnershipManifest(string InstallationDirectory
 public sealed class VendorOverlayCleanupService
 {
     public const string ManifestName = "vendor-overlay-ownership.json";
+    // Single source of truth for the companion updater file name; VendorUpdaterManager reuses it.
+    public const string UpdaterExecutableName = "Aion2.Updater.exe";
+    // Wired by the console to the application log; test projects run without a logger.
+    internal static Action<string>? LogSink;
+    static void Log(string message) => LogSink?.Invoke(message);
     private readonly Func<string, bool> processRunning;
     public VendorOverlayCleanupService(Func<string, bool>? processRunning = null) => this.processRunning = processRunning ?? IsProcessRunning;
 
@@ -44,18 +49,18 @@ public sealed class VendorOverlayCleanupService
         {
             if ((File.GetAttributes(target) & FileAttributes.ReparsePoint) != 0) return false;
             if (string.IsNullOrWhiteSpace(manifest.UpdaterExecutablePath) ||
-                !Path.GetFileName(manifest.UpdaterExecutablePath).Equals(VendorUpdaterManager.ExecutableName, StringComparison.OrdinalIgnoreCase) ||
+                !Path.GetFileName(manifest.UpdaterExecutablePath).Equals(UpdaterExecutableName, StringComparison.OrdinalIgnoreCase) ||
                 !File.Exists(manifest.UpdaterExecutablePath) ||
                 string.IsNullOrWhiteSpace(manifest.UpdaterSha256) ||
                 !Hash(manifest.UpdaterExecutablePath).Equals(manifest.UpdaterSha256, StringComparison.OrdinalIgnoreCase)) return false;
             var refreshed = manifest with { InstallationDirectory = Path.GetDirectoryName(target)!, DxgiSha256 = Hash(target) };
             File.WriteAllText(manifestPath, JsonSerializer.Serialize(refreshed, new JsonSerializerOptions { WriteIndented = true }));
-            Diagnostics.Log("menu-status", "module-evidence-refresh; reason=vendor-module-update; dxgi=" + refreshed.DxgiSha256[..12].ToLowerInvariant());
+            Log("module-evidence-refresh; reason=vendor-module-update; dxgi=" + refreshed.DxgiSha256[..12].ToLowerInvariant());
             return true;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            Diagnostics.Log("menu-status", "module-evidence-refresh-failed; type=" + e.GetType().Name);
+            Log("module-evidence-refresh-failed; type=" + e.GetType().Name);
             return false;
         }
     }
@@ -72,11 +77,11 @@ public sealed class VendorOverlayCleanupService
             var refreshed = manifest with { UpdaterExecutablePath = Path.GetFullPath(updaterExecutablePath), UpdaterSha256 = Hash(updaterExecutablePath) };
             if (refreshed == manifest) return;
             File.WriteAllText(manifestPath, JsonSerializer.Serialize(refreshed, new JsonSerializerOptions { WriteIndented = true }));
-            Diagnostics.Log("menu-status", "updater-evidence-refresh; updater=" + refreshed.UpdaterSha256[..12].ToLowerInvariant());
+            Log("updater-evidence-refresh; updater=" + refreshed.UpdaterSha256[..12].ToLowerInvariant());
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException)
         {
-            Diagnostics.Log("menu-status", "updater-evidence-refresh-failed; type=" + e.GetType().Name);
+            Log("updater-evidence-refresh-failed; type=" + e.GetType().Name);
         }
     }
 
@@ -133,7 +138,7 @@ public sealed class VendorOverlayCleanupService
         if (!PathsEqual(gameDir, manifest.InstallationDirectory)) { reason = "Ownership manifest does not match this verified AION2 installation; dxgi.dll was retained."; return false; }
         if (string.IsNullOrWhiteSpace(manifest.DxgiSha256) || !Hash(target).Equals(manifest.DxgiSha256, StringComparison.OrdinalIgnoreCase)) { reason = "dxgi.dll does not match the recorded vendor hash; it was retained."; return false; }
         if (string.IsNullOrWhiteSpace(manifest.UpdaterExecutablePath) ||
-            !Path.GetFileName(manifest.UpdaterExecutablePath).Equals(VendorUpdaterManager.ExecutableName, StringComparison.OrdinalIgnoreCase) ||
+            !Path.GetFileName(manifest.UpdaterExecutablePath).Equals(UpdaterExecutableName, StringComparison.OrdinalIgnoreCase) ||
             !File.Exists(manifest.UpdaterExecutablePath) ||
             string.IsNullOrWhiteSpace(manifest.UpdaterSha256) ||
             !Hash(manifest.UpdaterExecutablePath).Equals(manifest.UpdaterSha256, StringComparison.OrdinalIgnoreCase))

@@ -112,7 +112,7 @@ public static class VendorUpdaterInstallation
 
 public sealed class VendorUpdaterManager
 {
-    public const string ExecutableName = "Aion2.Updater.exe";
+    public const string ExecutableName = VendorOverlayCleanupService.UpdaterExecutableName;
     public static readonly TimeSpan CompletionPollInterval = TimeSpan.FromMilliseconds(100);
     public static readonly TimeSpan AutomationProbeTimeout = TimeSpan.FromSeconds(5);
     public static readonly TimeSpan ProcessHandoffTimeout = TimeSpan.FromSeconds(10);
