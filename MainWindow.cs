@@ -202,66 +202,87 @@ public sealed class MainWindow : Window
 
  }
  private void General(StackPanel root)
- {
-  root.Children.Add(Card(new Hexor.Updates.UpdatePanel(automaticallyCheckForUpdates)));
-  var p=Section(root,"Language preferences");
-  var uiRow=new Grid{Margin=new Thickness(0,4,0,8)};uiRow.ColumnDefinitions.Add(new());uiRow.ColumnDefinitions.Add(new(){Width=new GridLength(240)});p.Children.Add(uiRow);uiRow.Children.Add(Text(T("Language")));var ui=new ComboBox{ItemsSource=new[]{"English","简体中文","한국어"},SelectedItem=Model.Preferences.UiLanguage,HorizontalAlignment=HorizontalAlignment.Left};Grid.SetColumn(ui,1);uiRow.Children.Add(ui);ui.SelectionChanged+=(_,_)=>{if(ui.SelectedItem is string language){var previous=Model.Preferences.UiLanguage;var previousGame=Model.Preferences.GameLanguage;new LanguageSettingsService().SetUi(Model.Preferences,language);try{Model.SetGameLanguage(language switch{"English"=>"English","简体中文"=>"Traditional Chinese",_=>"Korean"});}catch{Model.Preferences.GameLanguage=previousGame;}if(!Model.Save()){Model.Preferences.UiLanguage=previous;Model.Preferences.GameLanguage=previousGame;}ShowPage(0);}};
+{
+  var updateWrap=new StackPanel();
+  updateWrap.Children.Add(new Hexor.Updates.UpdatePanel(automaticallyCheckForUpdates));
+  updateWrap.Children.Add(Text("Run the AION updater again whenever AION2 receives a game update.",12,false,"#B9ADCA"));
+  root.Children.Add(Card(updateWrap));
 
-   var cleanup=Section(root,"Bot module removal","Removes the automation module (dxgi.dll) that AION2 loads, and verified updater-owned data. Hexor Control Center remains installed; use Windows Settings to uninstall it.");
-   var clean=Button("Remove Bot Module",async()=>await RunCleanupAsync());clean.Name="RemoveBotModuleButton";clean.Background=Brush("#6942A8");cleanup.Children.Add(clean);
-   var menu=Section(root,"Menu status","File detection reports whether the verified menu DLL is installed. It does not claim the DLL is loaded into AION2.");
-   var menuRow=new WrapPanel{Orientation=Orientation.Horizontal};var unload=Button("Unload Menu",async()=>await UnloadMenuAsync());unload.Name="UnloadMenuButton";unload.Background=Brush("#6942A8");menuRow.Children.Add(unload);menuStatusText=Text(menuStatus.Text,13,true,"#DCC8FF");menuStatusText.Name="MenuStatusText";menuStatusText.Margin=new Thickness(16,8,0,5);menuRow.Children.Add(menuStatusText);menu.Children.Add(menuRow);
-   var diagnosticSupport=Section(root,"Diagnostics","Local support logs contain operational checkpoints only. Review the ZIP before sharing; nothing is uploaded automatically.");
-   diagnosticSupport.Children.Add(Text("Active log: hexor.log",12,true,"#DCC8FF"));
-   diagnosticSupport.Children.Add(Text($"Current size: {Diagnostics.ActiveLogSize/1024d/1024d:F2} MB",12,false,"#B9ADCA"));
-   var diagnosticButtons=new WrapPanel{Orientation=Orientation.Horizontal,ItemWidth=236,Margin=new Thickness(0,8,0,0)};
-   void DiagnosticButton(string label,Action action){var b=Button(label,action);b.HorizontalAlignment=HorizontalAlignment.Stretch;b.Margin=new Thickness(0,4,8,4);diagnosticButtons.Children.Add(b);}
-   DiagnosticButton("Open Log",()=>OpenPath(Diagnostics.ActiveLogPath));
-   DiagnosticButton("Open Logs Folder",()=>OpenPath(Diagnostics.Root));
-   DiagnosticButton("Copy Log Path",()=>{Clipboard.SetText(Diagnostics.ActiveLogPath);MessageBox.Show(this,"Log path copied.","Diagnostics",MessageBoxButton.OK,MessageBoxImage.Information);});
-   DiagnosticButton("Copy Support ID",()=>{Clipboard.SetText(Diagnostics.SessionId);MessageBox.Show(this,"Support ID copied.","Diagnostics",MessageBoxButton.OK,MessageBoxImage.Information);});
-   DiagnosticButton("Export Support Logs",()=>{var path=Diagnostics.ExportSupportLogs();if(string.IsNullOrEmpty(path)){MessageBox.Show(this,"Support log export could not be created.","Diagnostics",MessageBoxButton.OK,MessageBoxImage.Warning);return;}new SupportLogExportDialog(path){Owner=this}.ShowDialog();});
-   DiagnosticButton("Open Export Folder",()=>{var path=Diagnostics.LastExportPath;if(!string.IsNullOrEmpty(path))SupportLogExportActions.OpenFolder(path);else System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Diagnostics.Root){UseShellExecute=true});});
-   diagnosticSupport.Children.Add(diagnosticButtons);
-  var update=Section(root,"UPDATE STATUS");var updateText=Text("",14,true,"#DCC8FF");updateText.SetBinding(TextBlock.TextProperty,"UpdateStatus");update.Children.Add(updateText);update.Children.Add(Text("Run the AION updater again whenever AION2 receives a game update.",12,false,"#B9ADCA"));
-  var support=Section(root,"HEXOR SUPPORT & COMMUNITY");support.Children.Add(Text("Discord Server · discord.gg/PsDUVazRT3\nDiscord Username · h3x0r1337",13,false,"#DCC8FF"));support.Children.Add(Button("Join Discord",()=>System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://discord.gg/PsDUVazRT3"){UseShellExecute=true})));support.Children.Add(Button("Copy Username",()=>{Clipboard.SetText("h3x0r1337");MessageBox.Show(this,"Discord username copied.","Hexor Support",MessageBoxButton.OK,MessageBoxImage.Information);}));
+  var language=Section(root,"Language","The console language applies immediately. The in-game interface language is saved with your settings.");
+  var uiRow=new Grid{Margin=new Thickness(0,4,0,8)};uiRow.ColumnDefinitions.Add(new());uiRow.ColumnDefinitions.Add(new(){Width=new GridLength(240)});language.Children.Add(uiRow);
+  var uiLabel=Text(T("Console language"));uiLabel.VerticalAlignment=VerticalAlignment.Center;uiRow.Children.Add(uiLabel);
+  var ui=new ComboBox{ItemsSource=new[]{"English","简体中文","한국어"},SelectedItem=Model.Preferences.UiLanguage,HorizontalAlignment=HorizontalAlignment.Left};Grid.SetColumn(ui,1);uiRow.Children.Add(ui);
+  ui.SelectionChanged+=(_,_)=>{if(ui.SelectedItem is string chosen){var previous=Model.Preferences.UiLanguage;var previousGame=Model.Preferences.GameLanguage;new LanguageSettingsService().SetUi(Model.Preferences,chosen);try{Model.SetGameLanguage(chosen switch{"English"=>"English","简体中文"=>"Traditional Chinese",_=>"Korean"});}catch{Model.Preferences.GameLanguage=previousGame;}if(!Model.Save()){Model.Preferences.UiLanguage=previous;Model.Preferences.GameLanguage=previousGame;}ShowPage(0);}};
+  var cultureRow=new Grid{Margin=new Thickness(0,4,0,0)};cultureRow.ColumnDefinitions.Add(new());cultureRow.ColumnDefinitions.Add(new(){Width=new GridLength(240)});language.Children.Add(cultureRow);
+  var cultureLabel=Text(T("In-game interface language"));cultureLabel.VerticalAlignment=VerticalAlignment.Center;cultureRow.Children.Add(cultureLabel);
+  var culture=new ComboBox{ItemsSource=new[]{"zh-CN","en-US","ko-KR"},HorizontalAlignment=HorizontalAlignment.Left};culture.SetBinding(ComboBox.SelectedItemProperty,new Binding("OriginalUiCulture"){Mode=BindingMode.TwoWay});Grid.SetColumn(culture,1);cultureRow.Children.Add(culture);
+  language.Children.Add(Button("Save language preference",Model.SaveOriginalUiLanguage));
 
-  var advanced=new StackPanel();
-  advanced.Children.Add(Button("Sync Legion Commander Settings",PromptRegistryInitialization));
-  var maintenance=Section(advanced,"Advanced cleanup diagnostics","Manual review is optional. Customer cleanup uses the automatic workflow above.");
-  maintenance.Children.Add(Button("Review detected AION2 installations",ReviewAionInstallations));
-  var discovery=Section(advanced,"Settings folder","Choose your existing settings folder. Changes are saved only when you edit or apply a setting.");discovery.Children.Add(Button("Find settings",async()=>{await Model.DiscoverAsync();await RefreshMenuStatusAsync();ShowPage(0);}));discovery.Children.Add(Button("Choose settings folder",()=>{var dialog=new OpenFolderDialog{Title="Select existing settings folder"};if(dialog.ShowDialog(this)==true){Model.ConfirmConfigurationFolder(dialog.FolderName);ShowPage(0);}}));
-  var connected=Text("",12);connected.SetBinding(TextBlock.TextProperty,"DiagnosticsDataRoot");discovery.Children.Add(connected);discovery.Children.Add(Button("Reload settings",()=>{Model.ReloadConfiguration();ShowPage(0);}));
+  var module=Section(root,"Bot module","File detection reports whether the verified menu DLL is installed. It does not claim the DLL is loaded into AION2.");
+  var menuRow=new WrapPanel{Orientation=Orientation.Horizontal};var unload=Button("Unload Menu",async()=>await UnloadMenuAsync());unload.Name="UnloadMenuButton";unload.Background=Brush("#6942A8");unload.Margin=new Thickness(0,4,16,4);menuRow.Children.Add(unload);
+  menuStatusText=Text(menuStatus.Text,13,true,"#DCC8FF");menuStatusText.Name="MenuStatusText";menuStatusText.Margin=new Thickness(16,10,0,5);menuStatusText.VerticalAlignment=VerticalAlignment.Center;menuRow.Children.Add(menuStatusText);module.Children.Add(menuRow);
+  module.Children.Add(Text("Removing deletes the automation module (dxgi.dll) that AION2 loads, and verified updater-owned data. Hexor Control Center remains installed; use Windows Settings to uninstall it.",12,false,"#AEA5C0"));
+  var clean=Button("Remove Bot Module",async()=>await RunCleanupAsync());clean.Name="RemoveBotModuleButton";clean.Background=Brush("#69284A");clean.Margin=new Thickness(0,4,0,0);module.Children.Add(clean);
+
+  var folder=Section(root,"Settings folder","Choose your existing settings folder. Changes are saved only when you edit or apply a setting.");
+  var folderButtons=new WrapPanel{Orientation=Orientation.Horizontal};
+  void FolderButton(string label,Action action){var b=Button(label,action);b.Margin=new Thickness(0,4,10,4);folderButtons.Children.Add(b);}
+  FolderButton("Find settings",async()=>{await Model.DiscoverAsync();await RefreshMenuStatusAsync();ShowPage(0);});
+  FolderButton("Choose settings folder",()=>{var dialog=new OpenFolderDialog{Title="Select existing settings folder"};if(dialog.ShowDialog(this)==true){Model.ConfirmConfigurationFolder(dialog.FolderName);ShowPage(0);}});
+  FolderButton("Reload settings",()=>{Model.ReloadConfiguration();ShowPage(0);});
+  FolderButton("Sync Legion Commander Settings",PromptRegistryInitialization);
+  folder.Children.Add(folderButtons);
+  var connected=Text("",12);connected.SetBinding(TextBlock.TextProperty,"DiagnosticsDataRoot");folder.Children.Add(connected);
   foreach(var candidate in Model.Candidates.Where(c=>new Hexor.Compatibility.ConfigurationInspector().Inspect(c.Folder).HasEvidence))
   {
-   var folder=candidate.Folder;
-   discovery.Children.Add(Button("Use settings: "+folder,()=>{Model.ConfirmConfigurationFolder(folder);ShowPage(0);}));
+   var candidateButtons=new WrapPanel{Orientation=Orientation.Horizontal};
+   var folder2=candidate.Folder;
+   var use=Button("Use settings: "+folder2,()=>{Model.ConfirmConfigurationFolder(folder2);ShowPage(0);});use.Margin=new Thickness(0,4,10,4);candidateButtons.Children.Add(use);
+   folder.Children.Add(candidateButtons);
   }
-  var original=Section(advanced,"Application language");
-  var culture=new ComboBox{ItemsSource=new[]{"zh-CN","en-US","ko-KR"},HorizontalAlignment=HorizontalAlignment.Left};culture.SetBinding(ComboBox.SelectedItemProperty,new Binding("OriginalUiCulture"){Mode=BindingMode.TwoWay});original.Children.Add(Text("In-game interface language"));original.Children.Add(culture);original.Children.Add(Button("Save language preference",Model.SaveOriginalUiLanguage));
-  var detectedPath=Section(advanced,"Detected game location","Review and confirm the running game location before saving.");
-  var observedPath=Text("",12);observedPath.SetBinding(TextBlock.TextProperty,"Detection.ExecutablePath");detectedPath.Children.Add(observedPath);
-  var pathTarget=new ComboBox{ItemsSource=new[]{"Global / Steam","Taiwan","Korea"},SelectedIndex=0,HorizontalAlignment=HorizontalAlignment.Left};detectedPath.Children.Add(pathTarget);
-  detectedPath.Children.Add(Button("Review detected path…",async()=>{
+
+  var location=Section(root,"Detected game location","Review and confirm the running game location before saving.");
+  var observedPath=Text("",12);observedPath.SetBinding(TextBlock.TextProperty,"Detection.ExecutablePath");location.Children.Add(observedPath);
+  var locationRow=new WrapPanel{Orientation=Orientation.Horizontal};
+  var pathTarget=new ComboBox{ItemsSource=new[]{"Global / Steam","Taiwan","Korea"},SelectedIndex=0,MinWidth=150,VerticalAlignment=VerticalAlignment.Center};pathTarget.Margin=new Thickness(0,4,10,4);locationRow.Children.Add(pathTarget);
+  var review=Button("Review detected path…",async()=>{
    await Model.RefreshDetectionAsync();
    var key=new[]{"GamePath_Global","GamePath_TW","GamePath_KR"}[pathTarget.SelectedIndex];if(Model.ProposeDetectedPath(key) is not { } proposal)return;
    var previous=proposal.Expected.Value(key)??"(not configured)";
    if(MessageBox.Show(this,$"Save the detected game location for {pathTarget.SelectedItem}?\n\nCurrent: {previous}\nDetected: {proposal.ExecutablePath}\nPID: {proposal.ProcessId}\n\nA backup of the existing settings will be created.","Confirm game location",MessageBoxButton.YesNo,MessageBoxImage.Question,MessageBoxResult.No)!=MessageBoxResult.Yes)return;
    await Model.RefreshDetectionAsync();Model.ConfirmDetectedPath(proposal);
-  }));
+  });review.Margin=new Thickness(0,4,10,4);locationRow.Children.Add(review);
+  var installations=Button("Review detected AION2 installations",ReviewAionInstallations);installations.Margin=new Thickness(0,4,0,4);locationRow.Children.Add(installations);
+  location.Children.Add(locationRow);
+
+  var diagnostics=Section(root,"Diagnostics","Local support logs contain operational checkpoints only. Review the ZIP before sharing; nothing is uploaded automatically.");
+  diagnostics.Children.Add(Text("Active log: hexor.log",12,true,"#DCC8FF"));
+  diagnostics.Children.Add(Text($"Current size: {Diagnostics.ActiveLogSize/1024d/1024d:F2} MB",12,false,"#B9ADCA"));
+  var diagnosticButtons=new WrapPanel{Orientation=Orientation.Horizontal,ItemWidth=236,Margin=new Thickness(0,8,0,0)};
+  void DiagnosticButton(string label,Action action){var b=Button(label,action);b.HorizontalAlignment=HorizontalAlignment.Stretch;b.Margin=new Thickness(0,4,8,4);diagnosticButtons.Children.Add(b);}
+  DiagnosticButton("Open Log",()=>OpenPath(Diagnostics.ActiveLogPath));
+  DiagnosticButton("Open Logs Folder",()=>OpenPath(Diagnostics.Root));
+  DiagnosticButton("Copy Log Path",()=>{Clipboard.SetText(Diagnostics.ActiveLogPath);MessageBox.Show(this,"Log path copied.","Diagnostics",MessageBoxButton.OK,MessageBoxImage.Information);});
+  DiagnosticButton("Copy Support ID",()=>{Clipboard.SetText(Diagnostics.SessionId);MessageBox.Show(this,"Support ID copied.","Diagnostics",MessageBoxButton.OK,MessageBoxImage.Information);});
+  DiagnosticButton("Export Support Logs",()=>{var path=Diagnostics.ExportSupportLogs();if(string.IsNullOrEmpty(path)){MessageBox.Show(this,"Support log export could not be created.","Diagnostics",MessageBoxButton.OK,MessageBoxImage.Warning);return;}new SupportLogExportDialog(path){Owner=this}.ShowDialog();});
+  DiagnosticButton("Open Export Folder",()=>{var path=Diagnostics.LastExportPath;if(!string.IsNullOrEmpty(path))SupportLogExportActions.OpenFolder(path);else System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Diagnostics.Root){UseShellExecute=true});});
+  DiagnosticButton("Refresh diagnostics",async()=>await Model.RefreshDetectionAsync());
+  DiagnosticButton("Retry task settings synchronization",Model.RetryAutoTaskMirror);
+  diagnostics.Children.Add(diagnosticButtons);
+
   var diagnosticPanel=new StackPanel();
   foreach(var field in new[]{("Observed at","DiagnosticsObservedAt"),("AION2 processes / executable paths","DiagnosticsProcess"),("Resolved configuration data root","DiagnosticsDataRoot"),("Configuration files","DiagnosticsFiles"),("Configuration installation-path association","DiagnosticsAssociation"),("Discovery decisions","DiagnosticsCandidates"),("Setting details","DiagnosticsSettingDetails"),("Detection errors","DiagnosticsErrors"),("CAPTCHA monitor","CaptchaDiagnostics")}){diagnosticPanel.Children.Add(Text(field.Item1,12,true,"#CDB6F5"));var data=Text("",12);data.SetBinding(TextBlock.TextProperty,field.Item2);diagnosticPanel.Children.Add(data);}
   var operation=Text("",12);operation.SetBinding(TextBlock.TextProperty,"Status");diagnosticPanel.Children.Add(operation);
   diagnosticPanel.Children.Add(Text("Saved preferences are not confirmation that the running automation has applied them. Some preferences take effect when a task or the game next starts.",12));
-  diagnosticPanel.Children.Add(Text("Auto Task settings are stored in the existing configuration and registry. If a save is only partially completed, use the retry action below. No in-process refresh is sent.",12));
-  diagnosticPanel.Children.Add(Button("Retry task settings synchronization",Model.RetryAutoTaskMirror));
-  diagnosticPanel.Children.Add(Button("Refresh diagnostics",async()=>await Model.RefreshDetectionAsync()));
-  diagnosticPanel.Children.Add(Text("Active log: hexor.log",12,true,"#DCC8FF"));
-  diagnosticPanel.Children.Add(Button("Open Log",()=>OpenPath(Diagnostics.ActiveLogPath)));
-  diagnosticPanel.Children.Add(Button("Open Logs Folder",()=>OpenPath(Diagnostics.Root)));
-  diagnosticPanel.Children.Add(Button("Copy Log Path",()=>Clipboard.SetText(Diagnostics.ActiveLogPath)));
-  advanced.Children.Add(diagnosticPanel);
-  var diagnostics=new Expander{Name="DiagnosticsExpander",Header="Advanced settings & diagnostics",IsExpanded=false,Foreground=Brushes.White,Content=advanced};root.Children.Add(Card(diagnostics));
+  diagnosticPanel.Children.Add(Text("Auto Task settings are stored in the existing configuration and registry. If a save is only partially completed, use the retry action above. No in-process refresh is sent.",12));
+  var diagnosticsExpander=new Expander{Name="DiagnosticsExpander",Header="Diagnostics details",IsExpanded=false,Foreground=Brushes.White,Content=diagnosticPanel};root.Children.Add(Card(diagnosticsExpander));
+
+  var support=Section(root,"Support & community");
+  support.Children.Add(Text("Discord Server · discord.gg/PsDUVazRT3\nDiscord Username · h3x0r1337",13,false,"#DCC8FF"));
+  var supportButtons=new WrapPanel{Orientation=Orientation.Horizontal};
+  var join=Button("Join Discord",()=>System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://discord.gg/PsDUVazRT3"){UseShellExecute=true}));join.Margin=new Thickness(0,4,10,4);supportButtons.Children.Add(join);
+  var copyUser=Button("Copy Username",()=>{Clipboard.SetText("h3x0r1337");MessageBox.Show(this,"Discord username copied.","Hexor Support",MessageBoxButton.OK,MessageBoxImage.Information);});copyUser.Margin=new Thickness(0,4,0,4);supportButtons.Children.Add(copyUser);
+  support.Children.Add(supportButtons);
  }
   private static void OpenPath(string path){try{if(path==Diagnostics.ActiveLogPath&&!System.IO.File.Exists(path))Diagnostics.Log("diagnostics","active-log-created");System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path){UseShellExecute=true});}catch(Exception e) when(e is System.IO.IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception){Diagnostics.Log("diagnostics","open-failed; type="+e.GetType().Name);}}
   private string MenuManifestPath(){var parent=AppLayout.InstallParent();return parent==null?"":System.IO.Path.Combine(parent,"AION Auto Updater",VendorOverlayCleanupService.ManifestName);}
