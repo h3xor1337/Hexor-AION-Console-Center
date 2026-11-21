@@ -881,6 +881,7 @@ public sealed class MainViewModel : Observable, IDisposable
         var authorizationPaused = false;
         var firstPoll = true;
         string lastIncidents = string.Empty;
+        var consecutiveRpcFailures = 0;
         while (true)
         {
             token.ThrowIfCancellationRequested();
@@ -915,7 +916,23 @@ public sealed class MainViewModel : Observable, IDisposable
             }
             if (commandId != null)
             {
-                var query = await CommanderCommandAsync(processId, "query", new { }, commandId).ConfigureAwait(false);
+                JsonElement query;
+                try
+                {
+                    query = await CommanderCommandAsync(processId, "query", new { }, commandId).ConfigureAwait(false);
+                    consecutiveRpcFailures = 0;
+                }
+                catch (Exception e) when (e is IOException or InvalidOperationException or TimeoutException)
+                {
+                    // A momentary pipe hiccup must not end a multi-hour run; the vendor keeps
+                    // ticking and so does this poll. A sustained failure (about a minute) does.
+                    consecutiveRpcFailures++;
+                    if (consecutiveRpcFailures == 1)
+                        Diagnostics.Log("daily-sequence", "query-unavailable; type=" + e.GetType().Name);
+                    if (consecutiveRpcFailures >= 12)
+                        throw;
+                    continue;
+                }
                 var queryStatus = ReadString(query, "Status");
                 if (string.Equals(queryStatus, "failed", StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException(ReadString(query, "Error") ?? "the game reported the step failed");
@@ -974,7 +991,7 @@ public sealed class MainViewModel : Observable, IDisposable
             var snapshot = await gameIpc.SendRuntimeRequestAsync(processId, "commander.snapshot", new { }).ConfigureAwait(false);
             return snapshot.ValueKind == JsonValueKind.Object ? snapshot : null;
         }
-        catch (Exception e) when (e is IOException or OperationCanceledException) { return null; }
+        catch (Exception e) when (e is IOException or OperationCanceledException or InvalidOperationException or TimeoutException) { return null; }
     }
 
     private static string? ReadString(JsonElement element, string name)
@@ -1087,6 +1104,8 @@ public sealed class MainViewModel : Observable, IDisposable
                 Diagnostics.Log("daily-sequence", $"step; pid={processId}; label={label}; target={target}; {detail}; commandId={commandId}");
                 if (detail.Contains("status=failed", StringComparison.Ordinal))
                     throw new InvalidOperationException("the " + label + " step was rejected by the game: " + detail);
+                if (commandId == null && target is "auto_task" or "krao_dungeon")
+                    throw new InvalidOperationException("the " + label + " step started without a trackable task id");
                 RebuildGameIpcUi();
                 await DwellStepAsync(processId, step, target, label, commandId, finishing, token).ConfigureAwait(false);
                 if (sequenceDayKey != null) completedStepsToday.Add(sequenceDayKey + "|" + index);
