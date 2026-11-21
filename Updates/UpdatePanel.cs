@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Windows;
 using System.Windows.Controls;
 
@@ -52,6 +53,7 @@ public sealed class UpdatePanel : StackPanel
   try
   {
    var trust=Trust.Load();if(string.IsNullOrWhiteSpace(trust.ManifestUrl)||string.IsNullOrWhiteSpace(trust.PublicKeyPem))throw new InvalidOperationException("Update hosting and release signing have not been configured for this build.");
+   CleanupStaleStaging(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"HexorAion","updates"));
    Hexor.Diagnostics.Log("ota","check-started");var path=Path.Combine(Path.GetTempPath(),"hexor-manifest-"+Guid.NewGuid()+".json");
    try{stage=OtaCheckStage.ManifestFetch;await UpdateCore.Download(trust.ManifestUrl,path,131072,token:cancellation.Token);stage=OtaCheckStage.ManifestRead;envelope=await File.ReadAllTextAsync(path,cancellation.Token);stage=OtaCheckStage.ManifestValidation;release=UpdateCore.Verify(envelope,trust.PublicKeyPem);Hexor.Diagnostics.Log("ota","signature-valid; version="+release.Version);}finally{try{File.Delete(path);}catch{stage=OtaCheckStage.ManifestCleanup;throw;}}
    stage=OtaCheckStage.Presentation;
@@ -72,12 +74,25 @@ public sealed class UpdatePanel : StackPanel
   try
   {
    var trust=Trust.Load();release=UpdateCore.Verify(envelope,trust.PublicKeyPem);
-   var root=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"HexorAion","updates",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(root);
-   var package=Path.Combine(root,"package.zip");dialog.SetStage("Downloading","Downloading the signed Hexor update…");
-   await UpdateCore.Download(release.DownloadUrl,package,600_000_000,new Progress<DownloadProgress>(p=>dialog.SetStage("Downloading","Downloading the signed Hexor update…",p)),cancellation.Token);
-   dialog.SetStage("Verifying signature","Checking the signed manifest and package SHA-256…");await Task.Run(()=>{UpdateCore.Verify(envelope,trust.PublicKeyPem);UpdateCore.VerifyPackage(package,release);},cancellation.Token);Hexor.Diagnostics.Log("ota","package-valid; version="+release.Version);
+   // Resolve the updater helper before downloading: a console without its updater (portable
+   // or development copies) cannot install, and discovering that only after a full package
+   // download wastes the entire transfer.
+   var helperSource=ResolveUpdaterHelper();
+   var updatesRoot=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"HexorAion","updates");
+   CleanupStaleStaging(updatesRoot);
+   // An interrupted attempt already verified against this exact signed release can be reused;
+   // on a slow connection that saves the whole download.
+   var root=Path.Combine(updatesRoot,Guid.NewGuid().ToString("N"));Directory.CreateDirectory(root);
+   var package=Path.Combine(root,"package.zip");
+   var reused=ReuseVerifiedPackage(updatesRoot,release,package,dialog);
+   if(!reused)
+   {
+    dialog.SetStage("Downloading","Downloading the signed Hexor update…");
+    await UpdateCore.Download(release.DownloadUrl,package,600_000_000,new Progress<DownloadProgress>(p=>dialog.SetStage("Downloading","Downloading the signed Hexor update…",p)),cancellation.Token);
+   }
+   dialog.SetStage("Verifying signature","Checking the signed manifest and package SHA-256…");await Task.Run(()=>{UpdateCore.Verify(envelope,trust.PublicKeyPem);UpdateCore.VerifyPackage(package,release);},cancellation.Token);Hexor.Diagnostics.Log("ota","package-valid; version="+release.Version+(reused?"; reused":"; downloaded"));
    dialog.SetStage("Preparing installation","Validating the external updater and preparing a safe transaction…");
-   var manifest=Path.Combine(root,"manifest.json");await File.WriteAllTextAsync(manifest,envelope,cancellation.Token);var helper=Path.Combine(root,"Hexor.Updater.exe");File.Copy(ResolveUpdaterHelper(),helper);
+   var manifest=Path.Combine(root,"manifest.json");await File.WriteAllTextAsync(manifest,envelope,cancellation.Token);var helper=Path.Combine(root,"Hexor.Updater.exe");File.Copy(helperSource,helper);
    dialog.SetStage("Installing","Hexor will close now. The updater will safely replace the verified files.");
    var start=new ProcessStartInfo(helper){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=root};foreach(var arg in new[]{AppContext.BaseDirectory,manifest,package,Environment.ProcessId.ToString(),"restart"})start.ArgumentList.Add(arg);
    _=Process.Start(start)??throw new IOException("Could not start Hexor updater.");Hexor.Diagnostics.Log("ota","installer-started; restart=true");dialog.CompleteAndClose();Hexor.App.RequestShutdown("ota-install");
@@ -86,6 +101,56 @@ public sealed class UpdatePanel : StackPanel
   finally{installing=false;check.IsEnabled=true;}
  }
  static string SafeMessage(Exception ex)=>ex switch{HttpRequestException=>"The update could not be downloaded.",UnauthorizedAccessException=>"Hexor does not have permission to prepare the update.",IOException=>"The update files could not be prepared. Check free disk space and file permissions.",_=>"The signed update could not be verified or prepared."};
+ // Update staging accumulates one full package per attempt; interrupted or failed installs
+ // left many gigabytes behind over time. Staging directories older than a day are dead
+ // weight — a live install never lasts that long — so this sweep removes them quietly.
+ internal static void CleanupStaleStaging(string updatesRoot)
+ {
+  try
+  {
+   if(!Directory.Exists(updatesRoot))return;
+   foreach(var directory in Directory.EnumerateDirectories(updatesRoot))
+   {
+    try
+    {
+     if(DateTimeOffset.UtcNow-Directory.GetLastWriteTimeUtc(directory)>TimeSpan.FromHours(24))
+     {
+      Directory.Delete(directory,true);
+      Hexor.Diagnostics.Log("ota","stale-staging-removed; "+Path.GetFileName(directory));
+     }
+    }
+    catch(Exception e) when (e is IOException or UnauthorizedAccessException){}
+   }
+  }
+  catch(Exception e) when (e is IOException or UnauthorizedAccessException){}
+ }
+ // A previous attempt may have downloaded the very same signed release and lost the install
+ // to a restart or a missing updater helper. Any staging package whose size and SHA-256 both
+ // match the signed manifest is safe to reuse; the manifest verification below still guards
+ // the handover to the updater.
+ internal static bool ReuseVerifiedPackage(string updatesRoot,Manifest release,string destination,UpdateAvailableDialog dialog)
+ {
+  try
+  {
+   if(!Directory.Exists(updatesRoot))return false;
+   foreach(var directory in Directory.EnumerateDirectories(updatesRoot))
+   {
+    var candidate=Path.Combine(directory,"package.zip");
+    if(!File.Exists(candidate))continue;
+    var info=new FileInfo(candidate);
+    if(info.Length==0)continue;
+    dialog.SetStage("Checking previous download","Reusing a previously downloaded update, if it matches…");
+    string hash;
+    using(var stream=info.OpenRead())hash=Convert.ToHexString(SHA256.HashData(stream));
+    if(!hash.Equals(release.Sha256.Trim(),StringComparison.OrdinalIgnoreCase))continue;
+    File.Move(candidate,destination);
+    Hexor.Diagnostics.Log("ota","package-reused; "+Path.GetFileName(directory));
+    return true;
+  }
+  }
+  catch(Exception e) when (e is IOException or UnauthorizedAccessException){}
+  return false;
+ }
  // The helper ships beside the console; the desktop launcher copy resolves it from the OTA-managed folder.
  internal static string ResolveUpdaterHelper()
  {
