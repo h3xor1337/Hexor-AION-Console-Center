@@ -56,6 +56,21 @@ static void WriteCompanion(string zipPath,string content){using var zip=ZipFile.
  UpdateCore.Install(install,stage);Check(UpdateCore.OwnedFiles.All(n=>File.ReadAllText(Path.Combine(install,n))=="MZnew release"),"successful installation including helper self replacement");
  Check(File.ReadAllText(Path.Combine(install,"customer.json"))=="customer settings"&&File.ReadAllText(Path.Combine(install,"Aion2.Updater.exe"))=="unrelated","customer and third party files preserved");
  File.WriteAllText(Path.Combine(install,".hexor-update","pending"),"interrupted");UpdateCore.Recover(install);Check(UpdateCore.OwnedFiles.All(n=>File.ReadAllText(Path.Combine(install,n))=="MZold release"),"journal recovery after interrupted installation");
+ // Light packages: the updater travels in the package only when it changed.
+ var light=Path.Combine(root,"light.zip");using(var lz=ZipFile.Open(light,ZipArchiveMode.Create)){using var writer=new StreamWriter(lz.CreateEntry(UpdateCore.OwnedFiles[0]).Open());writer.Write("MZnew console");}
+ UpdateCore.Stage(light,Path.Combine(root,"light-stage"));Check(true,"light package without updater staged");
+ var lightOnly=Path.Combine(root,"light-only.zip");using(var loz=ZipFile.Open(lightOnly,ZipArchiveMode.Create)){using var writer=new StreamWriter(loz.CreateEntry(UpdateCore.OwnedFiles[1]).Open());writer.Write("MZupdater");}
+ Reject(()=>UpdateCore.Stage(lightOnly,Path.Combine(root,"light-only-stage")),"package without the console rejected");
+ // Light-package selection: only updaters that understand light packages use them.
+ var lm=cm with{LightDownloadUrl=cm.DownloadUrl,LightSha256=m.Sha256,LightMinUpdaterVersion="1.0.29"};
+ Check(UpdateCore.Verify(Sign(lm),rsa.ExportSubjectPublicKeyInfoPem())==lm,"manifest with light package fields verifies");
+ Reject(()=>UpdateCore.Verify(Sign(lm with{LightDownloadUrl="http://example.com"}),rsa.ExportSubjectPublicKeyInfoPem()),"light HTTP URL rejected");
+ Check(UpdateCore.UseLightPackage(lm,new Version(1,0,29)),"light package selected for a light-capable helper");
+ Check(!UpdateCore.UseLightPackage(lm,new Version(1,0,28)),"light package refused for an older helper");
+ Check(!UpdateCore.UseLightPackage(cm,new Version(1,0,29)),"light package refused without light fields");
+ foreach(var name in UpdateCore.OwnedFiles)File.WriteAllText(Path.Combine(install,name),"MZold release");
+ UpdateCore.Install(install,Path.Combine(root,"light-stage"));Check(File.ReadAllText(Path.Combine(install,UpdateCore.OwnedFiles[0]))=="MZnew console"&&File.ReadAllText(Path.Combine(install,UpdateCore.OwnedFiles[1]))=="MZold release","light package replaces only the console");
+ File.WriteAllText(Path.Combine(install,".hexor-update","pending"),UpdateCore.OwnedFiles[0]);UpdateCore.Recover(install);Check(File.ReadAllText(Path.Combine(install,UpdateCore.OwnedFiles[0]))=="MZold release"&&File.ReadAllText(Path.Combine(install,UpdateCore.OwnedFiles[1]))=="MZold release","light transaction journal restores only its own file");
  using var cancel=new CancellationTokenSource();cancel.Cancel();try{await UpdateCore.Download("https://raw.githubusercontent.com/hexor-test-fixture/hexor-updates/main/latest.json",Path.Combine(root,"partial"),100,token:cancel.Token);throw new Exception("Cancellation ignored");}catch(OperationCanceledException){Check(!File.Exists(Path.Combine(root,"partial")),"cancelled download leaves no partial package");}
  await DownloadTests.Run(root,Check);
  Console.WriteLine($"{count} updater checks passed");return 0;

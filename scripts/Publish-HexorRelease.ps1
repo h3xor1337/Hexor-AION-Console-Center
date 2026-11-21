@@ -51,6 +51,22 @@ try{
  if($LASTEXITCODE -ne 0){throw 'Control Center publish failed'}
  & dotnet publish (Join-Path $root 'Updater\Hexor.Updater.csproj') -t:Rebuild -c Release -r win-x64 --self-contained true "-p:Version=$Version" -p:DebugType=None -p:DebugSymbols=false -p:IncludeSourceRevisionInInformationalVersion=false -o $payload
  if($LASTEXITCODE -ne 0){throw 'Helper publish failed'}
+ # The updater rarely changes while the console changes every release. Its sources are
+ # fingerprinted against a durable stamp: when the fingerprint is unchanged and the freshly
+ # built helper is byte-identical to the one customers already run, the package ships without
+ # it and the OTA download stays at roughly half the size. Losing the stamp only means one
+ # heavier release, never a wrong one: a missing helper is harmless, a changed one ships.
+ $updaterSources=@('Updater\Program.cs','Updater\Hexor.Updater.csproj','Updates\UpdateCore.cs','Updates\UpdateDialog.cs','Updates\trust.json') | ForEach-Object {Join-Path $root $_}
+ $updaterFingerprint=-join (($updaterSources | Sort-Object) | ForEach-Object {[IO.Path]::GetFileName($_);(Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash})
+ $stampPath=Join-Path $root '.build\updater-stamp.json'
+ $stamp=$null;if(Test-Path -LiteralPath $stampPath){try{$stamp=Get-Content -Raw -LiteralPath $stampPath | ConvertFrom-Json}catch{}}
+ $updaterChanged=(-not $stamp)-or($stamp.SourceHash -cne $updaterFingerprint)
+ $updaterVersion=if($updaterChanged){$Version}else{$stamp.Version}
+ $updaterExe=Join-Path $payload 'Hexor.Updater.exe'
+ $updaterHash=(Get-FileHash -LiteralPath $updaterExe -Algorithm SHA256).Hash.ToLowerInvariant()
+ $includeUpdater=$updaterChanged-or($stamp.ExeSha256 -cne $updaterHash)
+ if($includeUpdater){New-Item -ItemType Directory -Force -Path (Split-Path -Parent $stampPath) | Out-Null;@{SourceHash=$updaterFingerprint;Version=$updaterVersion;ExeSha256=$updaterHash} | ConvertTo-Json | Set-Content -LiteralPath $stampPath -Encoding utf8}
+ else{Remove-Item -LiteralPath $updaterExe -Force}
  # Rebrand the vendor Aion2.Updater.exe from its pristine original so customers receive the
  # Hexor-branded updater alongside the console; the shipped companion is byte-for-byte the
  # artifact the live console produces and the console verifies it against the signed manifest.
@@ -59,12 +75,14 @@ try{
  & dotnet run --project (Join-Path $root 'scripts\HexorUpdaterRebrand\HexorUpdaterRebrand.csproj') -c Release -- $vendorOriginal (Join-Path $payload 'Aion2.Updater.exe')
  if($LASTEXITCODE -ne 0){throw 'Aion2.Updater.exe rebrand failed'}
  $files=@(Get-ChildItem -LiteralPath $payload -File -Recurse)
- if($files.Count -ne 3 -or @($files | Where-Object Name -notin @('Hexor-AION-Control-Center.exe','Hexor.Updater.exe','Aion2.Updater.exe')).Count){throw 'Unexpected package files'}
+ $expectedPackageFiles=@('Hexor-AION-Control-Center.exe','Aion2.Updater.exe');if($includeUpdater){$expectedPackageFiles=@('Hexor-AION-Control-Center.exe','Hexor.Updater.exe','Aion2.Updater.exe')}
+ if(($files.Count -ne $expectedPackageFiles.Count) -or (@($files | Where-Object Name -notin $expectedPackageFiles).Count)){throw 'Unexpected package files'}
  $expectedVersion=[version]$Version
  foreach($file in @($files | Where-Object Name -in @('Hexor-AION-Control-Center.exe','Hexor.Updater.exe'))){
   $actual=[Diagnostics.FileVersionInfo]::GetVersionInfo($file.FullName)
   $actualVersion=[version]::new($actual.FileMajorPart,$actual.FileMinorPart,$actual.FileBuildPart)
-  if($actualVersion -ne $expectedVersion){throw "Published executable version metadata does not match ${Version}: $($file.Name) reports $actualVersion"}
+  $expectedHelperVersion=if($file.Name -eq 'Hexor.Updater.exe'){[version]$updaterVersion}else{$expectedVersion}
+  if($actualVersion -ne $expectedHelperVersion){throw "Published executable version metadata does not match $($file.Name): reports $actualVersion, expected $expectedHelperVersion"}
  }
  if($Version -ceq '1.0.14'){
   Import-Module (Join-Path $PSScriptRoot 'HexorReleaseQualification.psm1') -Force
@@ -72,9 +90,10 @@ try{
   Write-HexorGateEvidence (Join-Path $out 'candidate-authenticode-exception.json') $signingDisposition
  }
  $package=Join-Path $out "Hexor-$Version-win-x64.zip"
- # The OTA package carries exactly the two Hexor executables; the rebranded vendor updater
- # travels only in its own companion archive so every installed version stays compatible.
- $hexorFiles=@($files | Where-Object Name -in @('Hexor-AION-Control-Center.exe','Hexor.Updater.exe'))
+ # The OTA package always carries the console; the Hexor updater travels in it only when it
+ # changed, and the rebranded vendor updater travels only in its own companion archive so
+ # every installed version stays compatible.
+ $hexorFiles=@($files | Where-Object Name -in (@('Hexor-AION-Control-Center.exe')+($(if($includeUpdater){@('Hexor.Updater.exe')}else{@()}))))
  Compress-Archive -LiteralPath $hexorFiles.FullName -DestinationPath $package
  # Companion release asset: the rebranded vendor updater, delivered as its own archive and
  # referenced from the signed manifest; installed consoles fetch it automatically.

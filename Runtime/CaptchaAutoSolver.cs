@@ -426,11 +426,11 @@ public sealed class CaptchaAutoSolver : IDisposable
     }
 
     public string Describe() =>
-        !enabled ? "Auto-resolve is not configured: no recognition service is available."
-        : $"Auto-resolve is active. Solved {solved} · rejected {rejected} · failed {failed}"
-          + (pending.Count > 0 ? $" · {pending.Count} in progress" : "")
-          + (lastProvider.Length > 0 ? $" · last answer via {lastProvider}" : "")
-          + $"\n{lastEvent}";
+        !enabled ? Hexor.Translations.Localize("Auto-resolve is not configured: no recognition service is available.")
+        : Hexor.Translations.LocalizeFormat("Auto-resolve is active. Solved {0} · rejected {1} · failed {2}", solved, rejected, failed)
+          + (pending.Count > 0 ? Hexor.Translations.LocalizeFormat(" · {0} in progress", pending.Count) : "")
+          + (lastProvider.Length > 0 ? Hexor.Translations.LocalizeFormat(" · last answer via {0}", lastProvider) : "")
+          + "\n" + Hexor.Translations.Localize(lastEvent);
 
     internal async void OnChallenge(int pid, string requestId, string imageBase64, string? mimeType)
     {

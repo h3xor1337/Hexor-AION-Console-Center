@@ -25,10 +25,11 @@ public sealed class MainWindow : Window
  private readonly TaskCompletionSource initialLoadCompletion=new(TaskCreationOptions.RunContinuationsAsynchronously);
  internal Task InitialLoadCompleted=>initialLoadCompletion.Task;
  private readonly bool automaticallyCheckForUpdates;
- public MainWindow(MainViewModel? model=null, bool automaticallyCheckForUpdates=true)
+ private readonly bool ownsModel;
+ public MainWindow(MainViewModel? model=null, bool automaticallyCheckForUpdates=true, bool ownsModel=true)
  {
-  this.automaticallyCheckForUpdates=automaticallyCheckForUpdates;
-  Model=model??new();DataContext=Model;Title="HEXOR AION CONTROL CENTER";Width=Math.Min(1200,SystemParameters.WorkArea.Width);Height=Math.Min(800,SystemParameters.WorkArea.Height);MinWidth=920;MinHeight=620;ResizeMode=ResizeMode.CanResize;UseLayoutRounding=true;SnapsToDevicePixels=true;WindowStartupLocation=WindowStartupLocation.CenterScreen;Background=Brush("#0B0912");Foreground=Brushes.White;FontFamily=new("Segoe UI Variable");FontSize=14;
+  this.automaticallyCheckForUpdates=automaticallyCheckForUpdates;this.ownsModel=ownsModel;
+  Model=model??new();Translations.CurrentLanguage=Model.Preferences.UiLanguage;DataContext=Model;Title="HEXOR AION CONTROL CENTER";Width=Math.Min(1200,SystemParameters.WorkArea.Width);Height=Math.Min(800,SystemParameters.WorkArea.Height);MinWidth=920;MinHeight=620;ResizeMode=ResizeMode.CanResize;UseLayoutRounding=true;SnapsToDevicePixels=true;WindowStartupLocation=WindowStartupLocation.CenterScreen;Background=Brush("#0B0912");Foreground=Brushes.White;FontFamily=new("Segoe UI Variable");FontSize=14;
   WindowStyle=WindowStyle.None;
   WindowChrome.SetWindowChrome(this,new WindowChrome{CaptionHeight=46,ResizeBorderThickness=new Thickness(6),GlassFrameThickness=new Thickness(0),CornerRadius=new CornerRadius(14),UseAeroCaptionButtons=false,NonClientFrameEdges=NonClientFrameEdges.None});
   var shell=new Grid();shell.RowDefinitions.Add(new(){Height=new GridLength(46)});shell.RowDefinitions.Add(new());Content=new Border{BorderBrush=Brush("#32294A"),BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(14),ClipToBounds=true,Child=shell};
@@ -43,7 +44,7 @@ public sealed class MainWindow : Window
   var root=new Grid();root.ColumnDefinitions.Add(new(){Width=new(260)});root.ColumnDefinitions.Add(new());Grid.SetRow(root,1);shell.Children.Add(root);
   var sidebar=new DockPanel{Background=Brush("#100D19"),Margin=new(0)};root.Children.Add(sidebar);
   var brand=new StackPanel{Margin=new(22,24,22,20)};var suppliedLogo=BrandImage("Assets/Hex Logo-Transparent.png",196,64);if(suppliedLogo!=null)brand.Children.Add(suppliedLogo);else brand.Children.Add(Text("HEXOR",29,true));brand.Children.Add(Text("AION CONTROL CENTER",10,false,"#B9ADCA"));DockPanel.SetDock(brand,Dock.Top);sidebar.Children.Add(brand);
-  var footer=new StackPanel{Margin=new(18,12,18,22)};var updaterButton=Button("Open AION Updater",async()=>await Model.OpenAionUpdaterAsync());updaterButton.Name="OpenAionUpdaterButton";updaterButton.HorizontalAlignment=HorizontalAlignment.Stretch;updaterButton.Background=Brush("#6942A8");updaterButton.ToolTip="Open the original AION updater";footer.Children.Add(updaterButton);
+  var footer=new StackPanel{Margin=new(18,12,18,22)};var updaterButton=Button("Open AION Updater",async()=>await Model.OpenAionUpdaterAsync());updaterButton.Name="OpenAionUpdaterButton";updaterButton.HorizontalAlignment=HorizontalAlignment.Stretch;updaterButton.Background=Brush("#7849B5");updaterButton.Style=(Style)FindResource("AccentButtonStyle");updaterButton.ToolTip="Open the original AION updater";footer.Children.Add(updaterButton);
   var updaterStatus=Text("",12,false,"#B9ADCA");updaterStatus.Name="AionUpdaterStatus";updaterStatus.SetBinding(TextBlock.TextProperty,nameof(MainViewModel.UpdateStatus));AutomationProperties.SetLiveSetting(updaterStatus,AutomationLiveSetting.Polite);footer.Children.Add(updaterStatus);
   DockPanel.SetDock(footer,Dock.Bottom);sidebar.Children.Add(footer);
   sidebar.Children.Add(new ScrollViewer{Content=navigation,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled});
@@ -51,10 +52,10 @@ public sealed class MainWindow : Window
   title.SetValue(KeyboardNavigation.IsTabStopProperty, false);
   AutomationProperties.SetHeadingLevel(title, AutomationHeadingLevel.Level1);
   var head=new StackPanel();head.Children.Add(title);head.Margin=new(0,0,0,14);DockPanel.SetDock(head,Dock.Top);main.Children.Add(head);
-  var status=new TextBlock{Margin=new(0,8,0,0),TextWrapping=TextWrapping.Wrap,Foreground=Brush("#CDB6F5")};status.SetBinding(TextBlock.TextProperty,"CustomerStatus");DockPanel.SetDock(status,Dock.Bottom);main.Children.Add(status);
-  var monitor=new WrapPanel();foreach(var item in new[]{("GAME","GameStatus"),("CLIENT","Detection.Client"),("SETTINGS","CustomerConfigurationStatus"),("CAPTCHA","CaptchaStatusText"),("IN-GAME CONTROLS","Show / Hide Menu · F10")}){var box=new StackPanel{Margin=new(0,0,24,0),MinWidth=130};box.Children.Add(Text(item.Item1,9,false,"#A99ABF"));var value=Text(item.Item2=="Show / Hide Menu · F10"?"F10  ·  Show / Hide Menu":"",13,true,item.Item2=="Show / Hide Menu · F10"?"#DCC8FF":"#F1EFF8");value.MaxWidth=330;if(item.Item1=="CAPTCHA")value.Name="CaptchaStatusTile";if(item.Item2!="Show / Hide Menu · F10")value.SetBinding(TextBlock.TextProperty,item.Item2);monitor.Children.Add(box);box.Children.Add(value);}var monitorCard=Card(monitor);monitorCard.Margin=new(0,0,0,18);DockPanel.SetDock(monitorCard,Dock.Top);main.Children.Add(monitorCard);
+  var statusWrap=new Border{BorderBrush=Brush("#241D31"),BorderThickness=new Thickness(0,1,0,0),Padding=new Thickness(0,10,0,0),Margin=new Thickness(0,10,0,0)};var status=new TextBlock{TextWrapping=TextWrapping.Wrap,Foreground=Brush("#B9A7D6"),FontSize=12.5};status.SetBinding(TextBlock.TextProperty,"CustomerStatus");statusWrap.Child=status;DockPanel.SetDock(statusWrap,Dock.Bottom);main.Children.Add(statusWrap);
+  var monitor=new WrapPanel();foreach(var item in new[]{("GAME","GameStatus"),("CLIENT","Detection.Client"),("SETTINGS","CustomerConfigurationStatus"),("CAPTCHA","CaptchaStatusText"),("IN-GAME CONTROLS","Show / Hide Menu · F10")}){var box=new StackPanel{Margin=new(0,0,24,0),MinWidth=130};box.Children.Add(Text(item.Item1,9,false,"#A99ABF"));var value=Text(item.Item2=="Show / Hide Menu · F10"?"F10  ·  Show / Hide Menu":"",13,true,item.Item2=="Show / Hide Menu · F10"?"#DCC8FF":"#F1EFF8");value.MaxWidth=330;if(item.Item1=="CAPTCHA")value.Name="CaptchaStatusTile";if(item.Item2!="Show / Hide Menu · F10")value.SetBinding(TextBlock.TextProperty,new Binding(item.Item2){Converter=new LocalizeConverter()});monitor.Children.Add(box);box.Children.Add(value);}var monitorCard=Card(monitor);monitorCard.Margin=new(0,0,0,18);DockPanel.SetDock(monitorCard,Dock.Top);main.Children.Add(monitorCard);
   pageScroll.Content=content;main.Children.Add(pageScroll);
-   BuildNavigation();ShowPage(0);timer.Tick+=async(_,_)=>{await Model.RefreshDetectionAsync();await Model.PollCaptchaAsync();};Loaded+=async(_,_)=>{try{await Model.DiscoverAsync();await RefreshMenuStatusAsync();ShowPage(page);await Model.RefreshDetectionAsync();await Model.PollCaptchaAsync();await RefreshMenuStatusAsync();if(model==null && Model.NeedsRegistryInitialization())PromptRegistryInitialization();timer.Start();}finally{initialLoadCompletion.TrySetResult();}};Activated+=async(_,_)=>await RefreshMenuStatusAsync();Closed+=(_,_)=>{timer.Stop();menuRefresh?.Cancel();menuRefresh?.Dispose();Model.Dispose();};
+   BuildNavigation();ShowPage(0);timer.Tick+=async(_,_)=>{await Model.RefreshDetectionAsync();await Model.PollCaptchaAsync();};Loaded+=async(_,_)=>{try{await Model.DiscoverAsync();await RefreshMenuStatusAsync();ShowPage(page);await Model.RefreshDetectionAsync();await Model.PollCaptchaAsync();await RefreshMenuStatusAsync();if(model==null && Model.NeedsRegistryInitialization())PromptRegistryInitialization();timer.Start();}finally{initialLoadCompletion.TrySetResult();}};Activated+=async(_,_)=>await RefreshMenuStatusAsync();Closed+=(_,_)=>{timer.Stop();menuRefresh?.Cancel();menuRefresh?.Dispose();if(ownsModel)Model.Dispose();};
  }
  protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
  {
@@ -85,11 +86,15 @@ public sealed class MainWindow : Window
   catch(System.IO.IOException){return null;}
  }
  private static SolidColorBrush Brush(string hex)=>(SolidColorBrush)new BrushConverter().ConvertFromString(hex)!;
- private static TextBlock Text(string text,int size=14,bool bold=false,string color="#F1EFF8")=>new(){Text=text,FontSize=size,FontWeight=bold?FontWeights.SemiBold:FontWeights.Normal,Foreground=Brush(color),Margin=new(0,3,0,5)};
+ private static TextBlock Text(string text,int size=14,bool bold=false,string color="#F1EFF8")=>new(){Text=Translations.Localize(text),FontSize=size,FontWeight=bold?FontWeights.SemiBold:FontWeights.Normal,Foreground=Brush(color),Margin=new(0,3,0,5)};
  private static Border Card(UIElement child)=>new(){Background=Brush("#181421"),CornerRadius=new(16),Padding=new(22),Margin=new(0,0,0,14),Child=child,Effect=new System.Windows.Media.Effects.DropShadowEffect{Color=Color.FromRgb(0,0,0),Opacity=.25,BlurRadius=16,ShadowDepth=5}};
  private StackPanel Section(StackPanel parent,string heading,string? note=null){var panel=new StackPanel();panel.Children.Add(Text(T(heading),18,true));if(note!=null)panel.Children.Add(Text(T(note),12,false,"#AEA5C0"));parent.Children.Add(Card(panel));return panel;}
  private string T(string s)=>Translations.Get(Model.Preferences.UiLanguage,s);
  private Button Button(string label,Action action){var b=new Button{Content=T(label),HorizontalAlignment=HorizontalAlignment.Left};b.Click+=(_,_)=>action();return b;}
+ private Button AccentButton(string label,Action action){var b=Button(label,action);b.Style=(Style)FindResource("AccentButtonStyle");return b;}
+ private Button GhostButton(string label,Action action){var b=Button(label,action);b.Style=(Style)FindResource("GhostButtonStyle");return b;}
+ private Button DangerButton(string label,Action action){var b=Button(label,action);b.Style=(Style)FindResource("DangerButtonStyle");return b;}
+ private Grid FieldRow(Panel panel,string label,double controlWidth=280){var row=new Grid{Margin=new Thickness(0,4,0,4)};row.ColumnDefinitions.Add(new());row.ColumnDefinitions.Add(new(){Width=new GridLength(controlWidth)});var l=Text(T(label),14,false,"#D8D0E8");l.VerticalAlignment=VerticalAlignment.Center;row.Children.Add(l);panel.Children.Add(row);return row;}
  private TextBox Input(Panel panel,string label,string path)
  {
   panel.Children.Add(Text(T(label),12,false,"#BAB2CC"));
@@ -125,8 +130,20 @@ public sealed class MainWindow : Window
   }
   panel.Children.Add(row);return row;
  }
- private void BuildNavigation(){navigation.Children.Clear();for(var i=0;i<pages.Length;i++){var index=i;var b=Button(T(pages[i]),()=>{ShowPage(index);Keyboard.Focus(title);});var navText=Text(T(pages[i]),13,i==page,i==page?"#FFFFFF":"#C3B8D2");navText.TextWrapping=TextWrapping.NoWrap;b.Content=navText;b.Height=46;b.HorizontalAlignment=HorizontalAlignment.Stretch;b.HorizontalContentAlignment=HorizontalAlignment.Left;b.Margin=new(14,3,14,3);b.Padding=new Thickness(16,0,10,0);b.Background=Brush(i==page?"#51377B":"#100D19");b.Name="Navigation"+i;AutomationProperties.SetName(b,T(pages[i]));navigation.Children.Add(b);}}
-  public void ShowPage(int index){if(index<0||index>=pages.Length)throw new ArgumentOutOfRangeException(nameof(index));page=index;title.Text=T(pages[index]);BuildNavigation();if(index>0)Model.ReloadRegistry();var stack=new StackPanel();content.Content=stack;switch(index){case 0:General(stack);_ = RefreshMenuStatusAsync();break;case 1:ResourceGrab(stack);break;case 2:AutoDungeonPage(stack);break;case 3:AutoTask(stack);break;case 4:Enhance(stack);break;case 5:DailyActivities(stack);break;case 6:WorkSchedule(stack);break;case 7:Festival(stack);break;case 8:CaptchaPage(stack);break;}pageScroll.ScrollToTop();}
+ private static readonly string[] NavIconPaths=
+ {"M2,4.5 L14,4.5 M2,8 L14,8 M2,11.5 L14,11.5 M5.5,2.8 A1.7,1.7 0 1 1 5.49,2.8 M10,6.3 A1.7,1.7 0 1 1 9.99,6.3 M4.5,9.8 A1.7,1.7 0 1 1 4.49,9.8",
+  "M8,2.3 A5.7,5.7 0 1 1 7.99,2.3 M8,4.7 A3.3,3.3 0 1 1 7.99,4.7",
+  "M3.5,13.5 L3.5,7.5 A4.5,4.5 0 0 1 12.5,7.5 L12.5,13.5 M1.5,13.5 L14.5,13.5",
+  "M2.5,3.5 H13.5 V13.5 H2.5 Z M5.2,8.6 L7.4,10.8 L11.2,6.4",
+  "M4.5,12.5 L8,9 L11.5,12.5 M4.5,8 L8,4.5 L11.5,8",
+  "M3,5.5 H13 V13.5 H3 Z M5.5,3 V6.5 M10.5,3 V6.5 M3,8.3 H13",
+  "M8,2.5 A5.5,5.5 0 1 1 7.99,2.5 M8,5.2 L8,8.4 L10.6,9.8",
+  "M8,2.5 L9.4,6.6 L13.5,8 L9.4,9.4 L8,13.5 L6.6,9.4 L2.5,8 L6.6,6.6 Z",
+  "M8,2 L13.2,4.2 V8.2 C13.2,11.4 10.9,13.4 8,14 C5.1,13.4 2.8,11.4 2.8,8.2 V4.2 Z M5.9,8.1 L7.5,9.7 L10.3,6.4"};
+ private FrameworkElement NavIcon(int index,bool active){var p=new System.Windows.Shapes.Path{Data=Geometry.Parse(NavIconPaths[index]),Stroke=Brush(active?"#DCBFFF":"#9A8AB4"),StrokeThickness=1.7,StrokeStartLineCap=PenLineCap.Round,StrokeEndLineCap=PenLineCap.Round,StrokeLineJoin=PenLineJoin.Round,Width=16,Height=16,Stretch=Stretch.None,VerticalAlignment=VerticalAlignment.Center};return p;}
+ private void BuildNavigation(){navigation.Children.Clear();for(var i=0;i<pages.Length;i++){var index=i;var b=Button(T(pages[i]),()=>{ShowPage(index);Keyboard.Focus(title);});var indicator=new Border{Width=3,Height=18,CornerRadius=new CornerRadius(2),Background=Brush("#9667E7"),Visibility=i==page?Visibility.Visible:Visibility.Collapsed,Margin=new Thickness(0,0,12,0)};var row=new StackPanel{Orientation=Orientation.Horizontal};row.Children.Add(indicator);row.Children.Add(NavIcon(i,i==page));var navText=Text(T(pages[i]),13,i==page,i==page?"#FFFFFF":"#C3B8D2");navText.TextWrapping=TextWrapping.NoWrap;navText.Margin=new Thickness(12,0,0,0);row.Children.Add(navText);b.Content=row;b.Height=46;b.HorizontalAlignment=HorizontalAlignment.Stretch;b.HorizontalContentAlignment=HorizontalAlignment.Left;b.Margin=new(14,3,14,3);b.Padding=new Thickness(16,0,10,0);b.Background=Brush(i==page?"#4A326E":"#100D19");b.Name="Navigation"+i;AutomationProperties.SetName(b,T(pages[i]));if(i==page)FadeIn(b,120);navigation.Children.Add(b);}}
+ private static void FadeIn(UIElement element,double ms=140,double slideY=0){element.Opacity=0;if(SystemParameters.ClientAreaAnimation){var fade=new System.Windows.Media.Animation.DoubleAnimation(0,1,TimeSpan.FromMilliseconds(ms)){EasingFunction=new System.Windows.Media.Animation.CubicEase{EasingMode=System.Windows.Media.Animation.EasingMode.EaseOut}};element.BeginAnimation(UIElement.OpacityProperty,fade);if(slideY>0){var slide=new System.Windows.Media.Animation.ThicknessAnimation{From=new Thickness(0,slideY,0,0),To=new Thickness(0),Duration=TimeSpan.FromMilliseconds(ms),EasingFunction=fade.EasingFunction};element.BeginAnimation(FrameworkElement.MarginProperty,slide);}}else element.Opacity=1;}
+  public void ShowPage(int index){if(index<0||index>=pages.Length)throw new ArgumentOutOfRangeException(nameof(index));page=index;title.Text=T(pages[index]);BuildNavigation();if(index>0)Model.ReloadRegistry();var stack=new StackPanel();content.Content=stack;FadeIn(stack,140,8);switch(index){case 0:General(stack);_ = RefreshMenuStatusAsync();break;case 1:ResourceGrab(stack);break;case 2:AutoDungeonPage(stack);break;case 3:AutoTask(stack);break;case 4:Enhance(stack);break;case 5:DailyActivities(stack);break;case 6:WorkSchedule(stack);break;case 7:Festival(stack);break;case 8:CaptchaPage(stack);break;}pageScroll.ScrollToTop();}
  private void LiveControl(StackPanel root)
  {
   Model.LiveStopConfirmation = row => MessageBox.Show(this,$"Stop the daily workflow for session #{row.AccountId} (PID {row.ProcessId})?\n\nThe running automation stops at the next save point. This does not close the game.","Stop session",MessageBoxButton.YesNo,MessageBoxImage.Warning,MessageBoxResult.No)==MessageBoxResult.Yes;
@@ -212,7 +229,7 @@ public sealed class MainWindow : Window
   var uiRow=new Grid{Margin=new Thickness(0,4,0,8)};uiRow.ColumnDefinitions.Add(new());uiRow.ColumnDefinitions.Add(new(){Width=new GridLength(240)});language.Children.Add(uiRow);
   var uiLabel=Text(T("Console language"));uiLabel.VerticalAlignment=VerticalAlignment.Center;uiRow.Children.Add(uiLabel);
   var ui=new ComboBox{ItemsSource=new[]{"English","简体中文","한국어"},SelectedItem=Model.Preferences.UiLanguage,HorizontalAlignment=HorizontalAlignment.Left};Grid.SetColumn(ui,1);uiRow.Children.Add(ui);
-  ui.SelectionChanged+=(_,_)=>{if(ui.SelectedItem is string chosen){var previous=Model.Preferences.UiLanguage;var previousGame=Model.Preferences.GameLanguage;new LanguageSettingsService().SetUi(Model.Preferences,chosen);try{Model.SetGameLanguage(chosen switch{"English"=>"English","简体中文"=>"Traditional Chinese",_=>"Korean"});}catch{Model.Preferences.GameLanguage=previousGame;}if(!Model.Save()){Model.Preferences.UiLanguage=previous;Model.Preferences.GameLanguage=previousGame;}ShowPage(0);}};
+  ui.SelectionChanged+=(_,_)=>{if(ui.SelectedItem is string chosen){var previous=Model.Preferences.UiLanguage;var previousGame=Model.Preferences.GameLanguage;new LanguageSettingsService().SetUi(Model.Preferences,chosen);try{Model.SetGameLanguage(chosen switch{"English"=>"English","简体中文"=>"Traditional Chinese",_=>"Korean"});}catch{Model.Preferences.GameLanguage=previousGame;}if(!Model.Save()){Model.Preferences.UiLanguage=previous;Model.Preferences.GameLanguage=previousGame;}else{Translations.CurrentLanguage=chosen;Model.RefreshLocalizedStatuses();Hexor.Updates.UpdatePanel.ResetLanguage();var fresh=new MainWindow(Model,automaticallyCheckForUpdates,ownsModel:false);fresh.Show();Close();return;}}};
   var cultureRow=new Grid{Margin=new Thickness(0,4,0,0)};cultureRow.ColumnDefinitions.Add(new());cultureRow.ColumnDefinitions.Add(new(){Width=new GridLength(240)});language.Children.Add(cultureRow);
   var cultureLabel=Text(T("In-game interface language"));cultureLabel.VerticalAlignment=VerticalAlignment.Center;cultureRow.Children.Add(cultureLabel);
   var culture=new ComboBox{ItemsSource=new[]{"zh-CN","en-US","ko-KR"},HorizontalAlignment=HorizontalAlignment.Left};culture.SetBinding(ComboBox.SelectedItemProperty,new Binding("OriginalUiCulture"){Mode=BindingMode.TwoWay});Grid.SetColumn(culture,1);cultureRow.Children.Add(culture);
@@ -238,7 +255,7 @@ public sealed class MainWindow : Window
   {
    var candidateButtons=new WrapPanel{Orientation=Orientation.Horizontal};
    var folder2=candidate.Folder;
-   var use=Button("Use settings: "+folder2,()=>{Model.ConfirmConfigurationFolder(folder2);ShowPage(0);});use.Margin=new Thickness(0,4,10,4);candidateButtons.Children.Add(use);
+   var use=Button(Hexor.Translations.LocalizeFormat("Use settings: {0}",folder2),()=>{Model.ConfirmConfigurationFolder(folder2);ShowPage(0);});use.Margin=new Thickness(0,4,10,4);candidateButtons.Children.Add(use);
    folder.Children.Add(candidateButtons);
   }
 
@@ -258,7 +275,7 @@ public sealed class MainWindow : Window
 
   var diagnostics=Section(root,"Diagnostics","Local support logs contain operational checkpoints only. Review the ZIP before sharing; nothing is uploaded automatically.");
   diagnostics.Children.Add(Text("Active log: hexor.log",12,true,"#DCC8FF"));
-  diagnostics.Children.Add(Text($"Current size: {Diagnostics.ActiveLogSize/1024d/1024d:F2} MB",12,false,"#B9ADCA"));
+  diagnostics.Children.Add(Text(Hexor.Translations.LocalizeFormat("Current size: {0} MB",(Diagnostics.ActiveLogSize/1024d/1024d).ToString("F2",System.Globalization.CultureInfo.InvariantCulture)),12,false,"#B9ADCA"));
   var diagnosticButtons=new WrapPanel{Orientation=Orientation.Horizontal,ItemWidth=236,Margin=new Thickness(0,8,0,0)};
   void DiagnosticButton(string label,Action action){var b=Button(label,action);b.HorizontalAlignment=HorizontalAlignment.Stretch;b.Margin=new Thickness(0,4,8,4);diagnosticButtons.Children.Add(b);}
   DiagnosticButton("Open Log",()=>OpenPath(Diagnostics.ActiveLogPath));
@@ -461,7 +478,7 @@ public sealed class MainWindow : Window
   var selected=Text("",18,true,"#DCC8FF");selected.Name="AutoEquipCombatPowerValue";selected.SetBinding(TextBlock.TextProperty,new Binding("UpgradeMaxBattlePowerK"){StringFormat="{0}K"});selected.Margin=new Thickness(16,0,0,0);Grid.SetColumn(selected,1);capRow.Children.Add(selected);
   upgrade.Children.Add(capRow);
   CheckToggle(upgrade,"EnchantBoundKinahOnly","Auto-enchant with bound Kinah only (keep at least 500,000)");
-  var battleCurrent=Text("",12,false,"#B9ADCA");battleCurrent.SetBinding(TextBlock.TextProperty,new Binding("CurrentUpgradeMaxBattlePowerK"){StringFormat="Saved registry value: {0}K"});upgrade.Children.Add(battleCurrent);
+  var battleCurrent=Text("",12,false,"#B9ADCA");battleCurrent.SetBinding(TextBlock.TextProperty,new Binding("CurrentUpgradeMaxBattlePowerK"){StringFormat=Hexor.Translations.Localize("Saved registry value: {0}K")});upgrade.Children.Add(battleCurrent);
   upgrade.Children.Add(Button("Apply combat power cap",Model.SaveUpgradeMaxBattlePowerK));
 
   var extraction=Section(root,"Equipment Extraction","When the bag contains 100,000 or more Enhancement Stones, equipment that would normally be extracted is destroyed instead. Below 100,000, extraction continues normally.");
@@ -526,7 +543,7 @@ public sealed class MainWindow : Window
   selector.SetBinding(IsEnabledProperty, new Binding(nameof(MainViewModel.OriginalConfigurationReady)));
   var feedback = Text("", 13, false, "#CDB6F5");
   AutomationProperties.SetLiveSetting(feedback, AutomationLiveSetting.Polite);
-  var apply = Button("Apply " + label.ToLowerInvariant(), () =>
+  var apply = Button(Translations.Localize("Apply ") + Translations.Localize(label).ToLowerInvariant(), () =>
   {
    if (selector.SelectedValue is int value)
    {

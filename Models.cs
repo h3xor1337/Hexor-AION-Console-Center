@@ -10,6 +10,7 @@ public class Observable : INotifyPropertyChanged
  public event PropertyChangedEventHandler? PropertyChanged;
  protected bool Set<T>(ref T field,T value,[CallerMemberName]string? name=null) { if(EqualityComparer<T>.Default.Equals(field,value))return false;field=value;Changed(name);return true; }
  protected void Changed([CallerMemberName]string? name=null)=>PropertyChanged?.Invoke(this,new(name));
+ public void Refresh(params string[] names){foreach(var n in names)Changed(n);}
 }
 public sealed class RelayCommand(Action execute,Func<bool>? can=null) : ICommand
 { public event EventHandler? CanExecuteChanged { add { CommandManager.RequerySuggested+=value; } remove { CommandManager.RequerySuggested-=value; } } public bool CanExecute(object? p)=>can?.Invoke()??true;public void Execute(object? p)=>execute(); }
@@ -22,11 +23,11 @@ public sealed class Instruction : Observable
  // Step labels follow the vendor editor's wording: kind plus its behavior summary.
  [JsonIgnore]public string ActivityLabel => Type switch
  {
-  InstructionType.Gathering => (ResetTimer ? "Fresh gathering" : "Gathering") + $" ({MinimumMinutes.ToString(System.Globalization.CultureInfo.InvariantCulture)}–{MaximumMinutes.ToString(System.Globalization.CultureInfo.InvariantCulture)} min)",
-  InstructionType.KinahFarming => "Kinah farming · daily random 93.0%–99.0%" + (SmartPatrol ? " · smart patrol" : ""),
-  InstructionType.AutoQuest => "Auto Dungeon · continues after all tasks finish",
-  InstructionType.AutoKraoDungeon => "Auto Krao Dungeon · continues when battle power or Od energy runs out",
-  _ => "Switch to the next character",
+  InstructionType.Gathering => Translations.Localize(ResetTimer ? "Fresh gathering" : "Gathering") + Translations.LocalizeFormat("({0}–{1} min)", MinimumMinutes.ToString(System.Globalization.CultureInfo.InvariantCulture), MaximumMinutes.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+  InstructionType.KinahFarming => Translations.Localize("Kinah farming · daily random 93.0%–99.0%") + (SmartPatrol ? Translations.Localize(" · smart patrol") : ""),
+  InstructionType.AutoQuest => Translations.Localize("Auto Dungeon · continues after all tasks finish"),
+  InstructionType.AutoKraoDungeon => Translations.Localize("Auto Krao Dungeon · continues when battle power or Od energy runs out"),
+  _ => Translations.Localize("Switch to the next character"),
  };
  private int sequenceNumber;
  [JsonIgnore]public int SequenceNumber {get=>sequenceNumber;set=>Set(ref sequenceNumber,value);}

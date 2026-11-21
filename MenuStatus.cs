@@ -26,23 +26,23 @@ public sealed class MenuStatusService
         {
             token.ThrowIfCancellationRequested();
             var candidates = installations.DistinctBy(x => x.InstallationDirectory, StringComparer.OrdinalIgnoreCase).ToArray();
-            if (candidates.Length > 1) return new(MenuStatusState.MultipleInstallations, "Multiple installations — select the correct AION2 installation.");
-            if (candidates.Length == 0) return new(MenuStatusState.NotDetected, "Not detected");
+            if (candidates.Length > 1) return new(MenuStatusState.MultipleInstallations, Translations.Localize("Multiple installations — select the correct AION2 installation."));
+            if (candidates.Length == 0) return new(MenuStatusState.NotDetected, Translations.Localize("Not detected"));
             var installation = candidates[0];
-            if (!File.Exists(installation.OverlayPath)) return new(MenuStatusState.NotDetected, "Not detected", installation.ExecutablePath, installation.OverlayPath);
+            if (!File.Exists(installation.OverlayPath)) return new(MenuStatusState.NotDetected, Translations.Localize("Not detected"), installation.ExecutablePath, installation.OverlayPath);
             var inspection = cleanup.Inspect(installation.ExecutablePath, manifestPath);
             if (inspection.State == VendorOverlayCleanupState.CouldNotVerify)
-                { Diagnostics.Log("menu-status", "ownership-unverified; reason=" + inspection.Message); return new(MenuStatusState.VerificationRequired, "Verification required — menu ownership or installation path is uncertain.", installation.ExecutablePath, installation.OverlayPath); }
+                { Diagnostics.Log("menu-status", "ownership-unverified; reason=" + inspection.Message); return new(MenuStatusState.VerificationRequired, Translations.Localize("Verification required — menu ownership or installation path is uncertain."), installation.ExecutablePath, installation.OverlayPath); }
             if (inspection.State != VendorOverlayCleanupState.Skipped || !inspection.Message.StartsWith("Verified", StringComparison.Ordinal))
-                return new(MenuStatusState.Error, "Error — menu status could not be determined.", installation.ExecutablePath, installation.OverlayPath);
-            if (gameRunning()) return new(MenuStatusState.GameRunning, "Game running — close AION2 before unloading the menu.", installation.ExecutablePath, installation.OverlayPath);
-            return new(MenuStatusState.MenuDetected, "Menu detected", installation.ExecutablePath, installation.OverlayPath);
+                return new(MenuStatusState.Error, Translations.Localize(Translations.Localize("Error — menu status could not be determined.")), installation.ExecutablePath, installation.OverlayPath);
+            if (gameRunning()) return new(MenuStatusState.GameRunning, Translations.Localize("Game running — close AION2 before unloading the menu."), installation.ExecutablePath, installation.OverlayPath);
+            return new(MenuStatusState.MenuDetected, Translations.Localize("Menu detected"), installation.ExecutablePath, installation.OverlayPath);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             Diagnostics.Log("menu-status", "status-check-failed; type=" + e.GetType().Name);
-            return new(MenuStatusState.Error, "Error — menu status could not be determined.");
+            return new(MenuStatusState.Error, Translations.Localize("Error — menu status could not be determined."));
         }
     }
 

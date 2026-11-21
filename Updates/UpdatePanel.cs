@@ -14,15 +14,18 @@ public sealed class UpdatePanel : StackPanel
   Aion2UpdaterSync.LogSink=message=>Hexor.Diagnostics.Log("ota",message);
   VendorOverlayCleanupService.LogSink=message=>Hexor.Diagnostics.Log("menu-status",message);
  }
- readonly TextBlock current=new(),latest=new(){Text="Latest Version: Checking…"},status=new(){Text="Checking update",TextWrapping=TextWrapping.Wrap};
+ readonly TextBlock current=new(),latest=new(){Text=Hexor.Translations.Localize("Latest Version: Checking…")},status=new(){Text=Hexor.Translations.Localize("Checking update"),TextWrapping=TextWrapping.Wrap};
  readonly ProgressBar progress=new(){Height=8,Margin=new Thickness(0,8,0,8),IsIndeterminate=true};
- readonly Button check=new(){Content="Check for Updates"};
+ readonly Button check=new(){Content=Hexor.Translations.Localize("Check for Updates")};
  readonly CancellationTokenSource cancellation=new();Manifest? release;string? envelope;bool started,checking,installing;
  static (string Latest,string Status)? lastResult;
+ // A language switch rebuilds the console; cached check outcomes in the old language
+ // must not overwrite the rebuilt panel's text.
+ internal static void ResetLanguage()=>lastResult=null;
  static string Installed=>Assembly.GetExecutingAssembly().GetName().Version is {} v?$"{v.Major}.{v.Minor}.{v.Build}":"1.0.0";
  public UpdatePanel(bool automaticallyCheck = true)
  {
-  current.Text="Current Version: "+Installed;Children.Add(new TextBlock{Text="Updates",FontSize=18,FontWeight=FontWeights.SemiBold});
+  current.Text=Hexor.Translations.LocalizeFormat("Current Version: {0}",Installed);Children.Add(new TextBlock{Text=Hexor.Translations.Localize("Updates"),FontSize=18,FontWeight=FontWeights.SemiBold});
   foreach(var element in new UIElement[]{current,latest,status,progress,check})Children.Add(element);
   check.Click+=async(_,_)=>await RequestCheck(false);
   if(automaticallyCheck)
@@ -48,7 +51,7 @@ public sealed class UpdatePanel : StackPanel
  }
  async Task Check()
  {
-  if(checking||installing)return;checking=true;check.IsEnabled=false;release=null;progress.IsIndeterminate=true;status.Text="Checking update";
+  if(checking||installing)return;checking=true;check.IsEnabled=false;release=null;progress.IsIndeterminate=true;status.Text=Hexor.Translations.Localize("Checking update");
   var stage=OtaCheckStage.TrustConfiguration;var installCallbackInvoked=false;
   try
   {
@@ -57,7 +60,7 @@ public sealed class UpdatePanel : StackPanel
    Hexor.Diagnostics.Log("ota","check-started");var path=Path.Combine(Path.GetTempPath(),"hexor-manifest-"+Guid.NewGuid()+".json");
    try{stage=OtaCheckStage.ManifestFetch;await UpdateCore.Download(trust.ManifestUrl,path,131072,token:cancellation.Token);stage=OtaCheckStage.ManifestRead;envelope=await File.ReadAllTextAsync(path,cancellation.Token);stage=OtaCheckStage.ManifestValidation;release=UpdateCore.Verify(envelope,trust.PublicKeyPem);Hexor.Diagnostics.Log("ota","signature-valid; version="+release.Version);}finally{try{File.Delete(path);}catch{stage=OtaCheckStage.ManifestCleanup;throw;}}
    stage=OtaCheckStage.Presentation;
-   latest.Text="Latest Version: "+release.Version;var newer=UpdateCore.ParseVersion(release.Version)>UpdateCore.ParseVersion(Installed);status.Text=newer?"Update available":"Up to date";
+   latest.Text=Hexor.Translations.LocalizeFormat("Latest Version: {0}",release.Version);var newer=UpdateCore.ParseVersion(release.Version)>UpdateCore.ParseVersion(Installed);status.Text=newer?Hexor.Translations.Localize("Update available"):Hexor.Translations.Localize("Up to date");
    lastResult=(latest.Text,status.Text);
    stage=OtaCheckStage.CompanionSync;
    await Aion2UpdaterSync.ReconcileAsync(release,AppContext.BaseDirectory,cancellation.Token);
@@ -65,7 +68,7 @@ public sealed class UpdatePanel : StackPanel
    // release downloads and applies without asking, then the updater relaunches the console.
    if(newer){var dialog=new UpdateAvailableDialog(Installed,release,d=>{installCallbackInvoked=true;return Install(d);},forced:true){Owner=Window.GetWindow(this)};dialog.ShowDialog();}
   }
-  catch(Exception ex){Hexor.Diagnostics.Log("ota",OtaCheckDiagnostics.Format(stage,ex,installCallbackInvoked),DiagnosticSeverity.Error);status.Text="Unable to check for updates. Hexor remains available; try again later.";latest.Text="Latest Version: Not available";lastResult=(latest.Text,status.Text);}
+  catch(Exception ex){Hexor.Diagnostics.Log("ota",OtaCheckDiagnostics.Format(stage,ex,installCallbackInvoked),DiagnosticSeverity.Error);status.Text=Hexor.Translations.Localize("Unable to check for updates. Hexor remains available; try again later.");latest.Text=Hexor.Translations.Localize("Latest Version: Not available");lastResult=(latest.Text,status.Text);}
   finally{progress.IsIndeterminate=false;check.IsEnabled=true;checking=false;}
  }
  async Task Install(UpdateAvailableDialog dialog)
@@ -84,23 +87,29 @@ public sealed class UpdatePanel : StackPanel
    // on a slow connection that saves the whole download.
    var root=Path.Combine(updatesRoot,Guid.NewGuid().ToString("N"));Directory.CreateDirectory(root);
    var package=Path.Combine(root,"package.zip");
-   var reused=ReuseVerifiedPackage(updatesRoot,release,package,dialog);
+   // Prefer the light package (console only) when the installed updater understands it; the
+   // full package remains the signed fallback for older installations.
+   var useLight=UpdateCore.UseLightPackage(release,helperSource);
+   var packageUrl=useLight?release.LightDownloadUrl!:release.DownloadUrl;
+   var packageHash=useLight?release.LightSha256!:release.Sha256;
+   if(useLight)Hexor.Diagnostics.Log("ota","light-package-selected");
+   var reused=ReuseVerifiedPackage(updatesRoot,packageHash,package,dialog);
    if(!reused)
    {
-    dialog.SetStage("Downloading","Downloading the signed Hexor update…");
-    await UpdateCore.Download(release.DownloadUrl,package,600_000_000,new Progress<DownloadProgress>(p=>dialog.SetStage("Downloading","Downloading the signed Hexor update…",p)),cancellation.Token);
+    dialog.SetStage("Downloading",Hexor.Translations.Localize("Downloading the signed Hexor update…"));
+    await UpdateCore.Download(packageUrl,package,600_000_000,new Progress<DownloadProgress>(p=>dialog.SetStage("Downloading",Hexor.Translations.Localize("Downloading the signed Hexor update…"),p)),cancellation.Token);
    }
-   dialog.SetStage("Verifying signature","Checking the signed manifest and package SHA-256…");await Task.Run(()=>{UpdateCore.Verify(envelope,trust.PublicKeyPem);UpdateCore.VerifyPackage(package,release);},cancellation.Token);Hexor.Diagnostics.Log("ota","package-valid; version="+release.Version+(reused?"; reused":"; downloaded"));
-   dialog.SetStage("Preparing installation","Validating the external updater and preparing a safe transaction…");
+   dialog.SetStage("Verifying signature",Hexor.Translations.Localize("Checking the signed manifest and package SHA-256…"));await Task.Run(()=>{UpdateCore.Verify(envelope,trust.PublicKeyPem);UpdateCore.VerifyPackage(package,packageHash);},cancellation.Token);Hexor.Diagnostics.Log("ota","package-valid; version="+release.Version+(reused?"; reused":"; downloaded")+(useLight?"; light":"; full"));
+   dialog.SetStage("Preparing installation",Hexor.Translations.Localize("Validating the external updater and preparing a safe transaction…"));
    var manifest=Path.Combine(root,"manifest.json");await File.WriteAllTextAsync(manifest,envelope,cancellation.Token);var helper=Path.Combine(root,"Hexor.Updater.exe");File.Copy(helperSource,helper);
-   dialog.SetStage("Installing","Hexor will close now. The updater will safely replace the verified files.");
+   dialog.SetStage("Installing",Hexor.Translations.Localize("Hexor will close now. The updater will safely replace the verified files."));
    var start=new ProcessStartInfo(helper){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=root};foreach(var arg in new[]{AppContext.BaseDirectory,manifest,package,Environment.ProcessId.ToString(),"restart"})start.ArgumentList.Add(arg);
    _=Process.Start(start)??throw new IOException("Could not start Hexor updater.");Hexor.Diagnostics.Log("ota","installer-started; restart=true");dialog.CompleteAndClose();Hexor.App.RequestShutdown("ota-install");
   }
   catch(Exception ex){Hexor.Diagnostics.Log("ota","install-failed; type="+ex.GetType().Name);dialog.ShowFailure("Update could not be completed",SafeMessage(ex));}
   finally{installing=false;check.IsEnabled=true;}
  }
- static string SafeMessage(Exception ex)=>ex switch{HttpRequestException=>"The update could not be downloaded.",UnauthorizedAccessException=>"Hexor does not have permission to prepare the update.",IOException=>"The update files could not be prepared. Check free disk space and file permissions.",_=>"The signed update could not be verified or prepared."};
+ static string SafeMessage(Exception ex)=>ex switch{HttpRequestException=>Hexor.Translations.Localize("The update could not be downloaded."),UnauthorizedAccessException=>Hexor.Translations.Localize("Hexor does not have permission to prepare the update."),IOException=>Hexor.Translations.Localize("The update files could not be prepared. Check free disk space and file permissions."),_=>Hexor.Translations.Localize("The signed update could not be verified or prepared.")};
  // Update staging accumulates one full package per attempt; interrupted or failed installs
  // left many gigabytes behind over time. Staging directories older than a day are dead
  // weight — a live install never lasts that long — so this sweep removes them quietly.
@@ -128,7 +137,7 @@ public sealed class UpdatePanel : StackPanel
  // to a restart or a missing updater helper. Any staging package whose size and SHA-256 both
  // match the signed manifest is safe to reuse; the manifest verification below still guards
  // the handover to the updater.
- internal static bool ReuseVerifiedPackage(string updatesRoot,Manifest release,string destination,UpdateAvailableDialog dialog)
+ internal static bool ReuseVerifiedPackage(string updatesRoot,string packageHash,string destination,UpdateAvailableDialog dialog)
  {
   try
   {
@@ -139,10 +148,10 @@ public sealed class UpdatePanel : StackPanel
     if(!File.Exists(candidate))continue;
     var info=new FileInfo(candidate);
     if(info.Length==0)continue;
-    dialog.SetStage("Checking previous download","Reusing a previously downloaded update, if it matches…");
+    dialog.SetStage("Checking previous download",Hexor.Translations.Localize("Reusing a previously downloaded update, if it matches…"));
     string hash;
     using(var stream=info.OpenRead())hash=Convert.ToHexString(SHA256.HashData(stream));
-    if(!hash.Equals(release.Sha256.Trim(),StringComparison.OrdinalIgnoreCase))continue;
+    if(!hash.Equals(packageHash.Trim(),StringComparison.OrdinalIgnoreCase))continue;
     File.Move(candidate,destination);
     Hexor.Diagnostics.Log("ota","package-reused; "+Path.GetFileName(directory));
     return true;

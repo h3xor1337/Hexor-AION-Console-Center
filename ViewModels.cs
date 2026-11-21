@@ -343,8 +343,8 @@ public sealed class MainViewModel : Observable, IDisposable
     private string status = "Ready.";
     public string Status { get => status; set { if(Set(ref status, value)) Changed(nameof(CustomerStatus)); } }
     private string updateStatus = "Installation ready.";
-    public string UpdateStatus { get => updateStatus; private set => Set(ref updateStatus, value); }
-    public string CustomerStatus => status.StartsWith("Hexor settings", StringComparison.Ordinal) || status.StartsWith("Some settings could not", StringComparison.Ordinal) || status.StartsWith("Settings not found", StringComparison.Ordinal) || status.StartsWith("Multiple", StringComparison.Ordinal) || status.StartsWith("No supported settings", StringComparison.Ordinal) ? status
+    public string UpdateStatus { get => Translations.Localize(updateStatus); private set => Set(ref updateStatus, value); }
+    public string CustomerStatus => Translations.Localize(status.StartsWith("Hexor settings", StringComparison.Ordinal) || status.StartsWith("Some settings could not", StringComparison.Ordinal) || status.StartsWith("Settings not found", StringComparison.Ordinal) || status.StartsWith("Multiple", StringComparison.Ordinal) || status.StartsWith("No supported settings", StringComparison.Ordinal) ? status
         : status.StartsWith("Found the sole", StringComparison.Ordinal) ? "Settings loaded."
         : status.Contains("partial",StringComparison.OrdinalIgnoreCase) || status.Contains("mirror failed",StringComparison.OrdinalIgnoreCase)
         || status.Contains("not synchronized",StringComparison.OrdinalIgnoreCase) ? "Some settings were saved. Open Diagnostics to review and retry."
@@ -359,11 +359,14 @@ public sealed class MainViewModel : Observable, IDisposable
         : status.StartsWith("Gear cap is unchanged",StringComparison.OrdinalIgnoreCase) ? "This setting is already saved."
         : status.StartsWith("Select a configuration",StringComparison.OrdinalIgnoreCase) || status.StartsWith("Load a valid",StringComparison.OrdinalIgnoreCase) ? "Choose and load an existing settings folder first."
         : status.StartsWith("A unique running",StringComparison.OrdinalIgnoreCase) ? "Start one game session to review its location."
-        : "Ready. Choose a setting to get started.";
-    public string GameStatus => Detection.Processes.Count > 0 ? "Game detected." : Detection.Errors.Count > 0 ? "Unable to check game status." : "Game not running.";
-    public string CustomerConfigurationStatus => ConfigurationStatus.Split(" • ")[0];
+        : "Ready. Choose a setting to get started.");
+    public string GameStatus => Detection.Processes.Count > 0 ? Translations.Localize("Game detected.") : Detection.Errors.Count > 0 ? Translations.Localize("Unable to check game status.") : Translations.Localize("Game not running.");
+    public string CustomerConfigurationStatus => Translations.Localize(ConfigurationStatus.Split(" • ")[0]);
     private Detection detection = new("Character not detected", "Server not detected", "Not detected", "Checking…", null);
     public Detection Detection { get => detection; private set { if(Set(ref detection, value)) { Changed(nameof(GameStatus)); Changed(nameof(CustomerConfigurationStatus)); } } }
+    // Computed status strings are localized at read time; after a UI language change the
+    // bindings must be told to re-read them.
+    public void RefreshLocalizedStatuses() => Refresh(nameof(GameStatus), nameof(CustomerConfigurationStatus), nameof(CaptchaStatusText), nameof(CaptchaDiagnostics), nameof(CaptchaRecordsSummary), nameof(CustomerStatus), nameof(UpdateStatus));
     private Instruction? selectedInstruction;
     public Instruction? SelectedInstruction { get => selectedInstruction; set => Set(ref selectedInstruction, value); }
     public string GatherMin { get; set; }
@@ -468,15 +471,14 @@ public sealed class MainViewModel : Observable, IDisposable
     private readonly CaptchaMonitor captchaMonitor;
     private CaptchaSnapshot captchaSnapshot = new(CaptchaPhase.Idle, null, null, "No challenge has appeared yet. Auto-resolve is watching.", "");
     private string captchaStatusText = "CAPTCHA monitoring starting";
-    private string captchaDiagnostics = "CAPTCHA monitor has not observed provider signals yet.";
-    private bool pollingCaptcha;
-    public string CaptchaStatusText { get => captchaStatusText; private set => Set(ref captchaStatusText, value); }
-    public string CaptchaDiagnostics { get => captchaDiagnostics; private set => Set(ref captchaDiagnostics, value); }
+    private string captchaDiagnostics = "CAPTCHA monitor has not observed provider signals yet.";    private bool pollingCaptcha;
+    public string CaptchaStatusText { get => Translations.Localize(captchaStatusText); private set => Set(ref captchaStatusText, value); }
+    public string CaptchaDiagnostics { get => Translations.Localize(captchaDiagnostics); private set => Set(ref captchaDiagnostics, value); }
     public bool CaptchaChallengeActive => captchaSnapshot.ChallengeActive;
     public IReadOnlyList<string> CaptchaRecordLines { get; private set; } = [];
     public string CaptchaRecordsSummary => CaptchaRecordLines.Count == 0
-        ? "Nothing yet. Challenges, answers and results appear here as they happen."
-        : $"Latest challenge activity ({CaptchaRecordLines.Count} entries).";
+        ? Translations.Localize("Nothing yet. Challenges, answers and results appear here as they happen.")
+        : Translations.LocalizeFormat("Latest challenge activity ({0} entries).", CaptchaRecordLines.Count);
     private readonly object recordLock = new();
     private readonly List<(DateTimeOffset At, string Text)> solverRecordHistory = new();
 

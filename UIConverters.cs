@@ -23,3 +23,10 @@ public sealed class StepTypeEnabledConverter : IValueConverter
             && System.Enum.TryParse<InstructionType>(kind, out var expected) && type == expected;
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => Binding.DoNothing;
 }
+
+public sealed class LocalizeConverter : System.Windows.Data.IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture)
+        => value is string s ? Translations.Localize(s) : value ?? "";
+    public object ConvertBack(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture) => System.Windows.Data.Binding.DoNothing;
+}

@@ -1,4 +1,5 @@
 using System.IO;
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Net.Http;
 using System.Net;
@@ -19,7 +20,7 @@ public sealed record Trust(string ManifestUrl, string PublicKeyPem)
 }
 // Signature covers the exact UTF-8 payload bytes, avoiding ambiguous JSON canonicalization.
 public sealed record Envelope(string Payload, string Signature);
-public sealed record Manifest(int SchemaVersion, string Version, string ReleaseDate, string DownloadUrl, string Sha256, string ReleaseNotes, string MinimumUpdaterVersion, bool Mandatory, string? Aion2UpdaterUrl = null, string? Aion2UpdaterSha256 = null);
+public sealed record Manifest(int SchemaVersion, string Version, string ReleaseDate, string DownloadUrl, string Sha256, string ReleaseNotes, string MinimumUpdaterVersion, bool Mandatory, string? Aion2UpdaterUrl = null, string? Aion2UpdaterSha256 = null, string? LightDownloadUrl = null, string? LightSha256 = null, string? LightMinUpdaterVersion = null);
 public sealed record DownloadProgress(long BytesReceived,long? TotalBytes)
 {
  public double? Percentage=>TotalBytes is >0?100.0*BytesReceived/TotalBytes.Value:null;
@@ -50,6 +51,9 @@ public static class UpdateCore
   if(m.Aion2UpdaterSha256 is {Length:>0} companion && !Regex.IsMatch(companion,@"^[a-fA-F0-9]{64}$"))throw new InvalidDataException("Unsupported companion updater metadata.");
   if(!string.IsNullOrEmpty(m.Aion2UpdaterUrl))ValidateReleaseUrl(m.Aion2UpdaterUrl);
   if((m.Aion2UpdaterUrl is null)!=(string.IsNullOrEmpty(m.Aion2UpdaterSha256)))throw new InvalidDataException("Companion updater metadata is incomplete.");
+  if(!string.IsNullOrEmpty(m.LightDownloadUrl))ValidateReleaseUrl(m.LightDownloadUrl);
+  if((m.LightDownloadUrl is null)!=(string.IsNullOrEmpty(m.LightSha256)))throw new InvalidDataException("Light package metadata is incomplete.");
+  if(!string.IsNullOrEmpty(m.LightMinUpdaterVersion))ParseVersion(m.LightMinUpdaterVersion);
   ParseVersion(m.Version);if(ParseVersion(m.MinimumUpdaterVersion)>ParseVersion(UpdaterVersion))throw new InvalidDataException("This release requires a newer AIO installer.");ValidateReleaseUrl(m.DownloadUrl);return m;
  }
  public const int MaximumRedirects=5;
@@ -146,16 +150,42 @@ public static class UpdateCore
    }catch{if(created)File.Delete(destination);throw;}
   }
  }
- public static void VerifyPackage(string package,Manifest manifest)
+ public static void VerifyPackage(string package,Manifest manifest)=>VerifyPackage(package,manifest.Sha256);
+ public static void VerifyPackage(string package,string sha256)
  {
-  using var stream=File.OpenRead(package);if(!Convert.ToHexString(SHA256.HashData(stream)).Equals(manifest.Sha256,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Package checksum is invalid.");
+  using var stream=File.OpenRead(package);if(!Convert.ToHexString(SHA256.HashData(stream)).Equals(sha256,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Package checksum is invalid.");
+ }
+ // Light packages carry the console without the updater and are used only when the installed
+ // updater understands them. Older consoles ignore these manifest fields entirely and keep
+ // using the full package, so a light release never strands an old installation.
+ public static bool UseLightPackage(Manifest manifest,string helperPath)
+ {
+  try
+  {
+   var helper=FileVersionInfo.GetVersionInfo(helperPath);
+   return UseLightPackage(manifest,new Version(helper.FileMajorPart,helper.FileMinorPart,helper.FileBuildPart));
+  }
+  catch(Exception e) when (e is ArgumentException or System.ComponentModel.Win32Exception){return false;}
+ }
+ public static bool UseLightPackage(Manifest manifest,Version helperVersion)
+ {
+  try
+  {
+   if(string.IsNullOrWhiteSpace(manifest.LightDownloadUrl)||string.IsNullOrWhiteSpace(manifest.LightSha256)||string.IsNullOrWhiteSpace(manifest.LightMinUpdaterVersion))return false;
+   ValidateReleaseUrl(manifest.LightDownloadUrl);
+   return helperVersion>=ParseVersion(manifest.LightMinUpdaterVersion);
+  }
+  catch(Exception e) when (e is InvalidDataException or ArgumentException){return false;}
  }
  public static void Stage(string package,string stage)
  {
   Directory.CreateDirectory(stage);using var zip=ZipFile.OpenRead(package);
-  if(zip.Entries.Count!=OwnedFiles.Length)throw new InvalidDataException("Package must contain only the two Hexor executables.");
-  var seen=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-  foreach(var entry in zip.Entries){if(!OwnedFiles.Contains(entry.FullName,StringComparer.Ordinal)||!seen.Add(entry.FullName)||entry.Length<2||entry.Length>600_000_000||(entry.ExternalAttributes>>16&0xF000)==0xA000)throw new InvalidDataException("Unsafe archive entry.");entry.ExtractToFile(Path.Combine(stage,entry.FullName));using var file=File.OpenRead(Path.Combine(stage,entry.FullName));if(file.ReadByte()!=77||file.ReadByte()!=90)throw new InvalidDataException("Invalid executable.");}
+  // The package always carries the console; the companion updater travels in it only when the
+  // updater itself changed, so routine releases download half the bytes.
+  if(zip.Entries.Count<1||zip.Entries.Count>OwnedFiles.Length)throw new InvalidDataException("Package must contain the Hexor executables.");
+  var seen=new HashSet<string>(StringComparer.OrdinalIgnoreCase);var hasConsole=false;
+  foreach(var entry in zip.Entries){if(!OwnedFiles.Contains(entry.FullName,StringComparer.Ordinal)||!seen.Add(entry.FullName)||entry.Length<2||entry.Length>600_000_000||(entry.ExternalAttributes>>16&0xF000)==0xA000)throw new InvalidDataException("Unsafe archive entry.");if(string.Equals(entry.FullName,OwnedFiles[0],StringComparison.Ordinal))hasConsole=true;entry.ExtractToFile(Path.Combine(stage,entry.FullName));using var file=File.OpenRead(Path.Combine(stage,entry.FullName));if(file.ReadByte()!=77||file.ReadByte()!=90)throw new InvalidDataException("Invalid executable.");}
+  if(!hasConsole)throw new InvalidDataException("Package must contain the Hexor console.");
  }
  public static string Aion2UpdaterTarget(string installDirectory)
  {
@@ -186,16 +216,27 @@ public static class UpdateCore
  public static void Recover(string install)
  {
   NoLinks(install);var txn=Path.Combine(install,".hexor-update");NoLinks(txn);
-  if(!File.Exists(Path.Combine(txn,"pending")))return;
-  foreach(var name in OwnedFiles){var backup=Path.Combine(txn,name);if(!File.Exists(backup))throw new IOException("Recovery backup is missing; retain the transaction folder.");AtomicCopy(backup,Path.Combine(install,name),txn);}
-  File.Delete(Path.Combine(txn,"pending"));
+  var pending=Path.Combine(txn,"pending");if(!File.Exists(pending))return;
+  foreach(var name in ReadPending(pending)){var backup=Path.Combine(txn,name);if(!File.Exists(backup))throw new IOException("Recovery backup is missing; retain the transaction folder.");AtomicCopy(backup,Path.Combine(install,name),txn);}
+  File.Delete(pending);
+ }
+ // The pending journal lists the files this transaction replaced, one per line. Journals from
+ // earlier releases hold a single status byte and covered every owned file.
+ static string[] ReadPending(string pending)
+ {
+  var names=File.ReadLines(pending).Where(n=>OwnedFiles.Contains(n,StringComparer.Ordinal)).ToArray();
+  return names.Length>0?names:OwnedFiles;
  }
  public static void Install(string install,string stage,Action<int>? afterReplace=null)
  {
   NoLinks(install);NoLinks(stage);Recover(install);var txn=Path.Combine(install,".hexor-update");Directory.CreateDirectory(txn);NoLinks(txn);
-  foreach(var name in OwnedFiles){var backup=Path.Combine(txn,name);if(File.Exists(backup)&&(File.GetAttributes(backup)&FileAttributes.ReparsePoint)!=0)throw new IOException("Linked backup rejected.");using var source=File.OpenRead(Path.Combine(install,name));using var target=new FileStream(backup,FileMode.Create,FileAccess.Write,FileShare.None);source.CopyTo(target);target.Flush(true);}
-  using(var journal=new FileStream(Path.Combine(txn,"pending"),FileMode.Create,FileAccess.Write,FileShare.None)){journal.WriteByte(1);journal.Flush(true);}
-  try{for(int i=0;i<OwnedFiles.Length;i++){var name=OwnedFiles[i];AtomicCopy(Path.Combine(stage,name),Path.Combine(install,name),txn);afterReplace?.Invoke(i);}File.Delete(Path.Combine(txn,"pending"));}
+  // Only the files the staged package carries are replaced; a package without the updater
+  // leaves the installed helper untouched and does not need a backup for it.
+  var affected=OwnedFiles.Where(n=>File.Exists(Path.Combine(stage,n))).ToArray();
+  foreach(var name in affected)if(!File.Exists(Path.Combine(install,name)))throw new IOException("Installation is missing "+name+"; a full package is required.");
+  foreach(var name in affected){var backup=Path.Combine(txn,name);if(File.Exists(backup)&&(File.GetAttributes(backup)&FileAttributes.ReparsePoint)!=0)throw new IOException("Linked backup rejected.");using var source=File.OpenRead(Path.Combine(install,name));using var target=new FileStream(backup,FileMode.Create,FileAccess.Write,FileShare.None);source.CopyTo(target);target.Flush(true);}
+  using(var journal=new FileStream(Path.Combine(txn,"pending"),FileMode.Create,FileAccess.Write,FileShare.None)){using var writer=new StreamWriter(journal);foreach(var name in affected)writer.WriteLine(name);journal.Flush(true);}
+  try{for(int i=0;i<affected.Length;i++){var name=affected[i];AtomicCopy(Path.Combine(stage,name),Path.Combine(install,name),txn);afterReplace?.Invoke(i);}File.Delete(Path.Combine(txn,"pending"));}
   catch{Recover(install);throw;}
  }
  static void AtomicCopy(string source,string destination,string txn)
