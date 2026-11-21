@@ -31,7 +31,7 @@ public sealed class UpdateAvailableDialog : Window
     {
         this.beginUpdate = beginUpdate; this.forced = forced;
         Title = "Hexor Update Available"; Width = 640; SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner; WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent;
+        WindowStartupLocation = WindowStartupLocation.CenterScreen; WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent;
         // Elevation reads through layered shadow, not a heavier border; the border stays for structure.
         var shell = new Border
         {
