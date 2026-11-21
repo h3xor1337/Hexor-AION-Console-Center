@@ -66,7 +66,6 @@ try{
  $updaterHash=(Get-FileHash -LiteralPath $updaterExe -Algorithm SHA256).Hash.ToLowerInvariant()
  $includeUpdater=$updaterChanged-or($stamp.ExeSha256 -cne $updaterHash)
  if($includeUpdater){New-Item -ItemType Directory -Force -Path (Split-Path -Parent $stampPath) | Out-Null;@{SourceHash=$updaterFingerprint;Version=$updaterVersion;ExeSha256=$updaterHash} | ConvertTo-Json | Set-Content -LiteralPath $stampPath -Encoding utf8}
- else{Remove-Item -LiteralPath $updaterExe -Force}
  # Rebrand the vendor Aion2.Updater.exe from its pristine original so customers receive the
  # Hexor-branded updater alongside the console; the shipped companion is byte-for-byte the
  # artifact the live console produces and the console verifies it against the signed manifest.
@@ -75,7 +74,7 @@ try{
  & dotnet run --project (Join-Path $root 'scripts\HexorUpdaterRebrand\HexorUpdaterRebrand.csproj') -c Release -- $vendorOriginal (Join-Path $payload 'Aion2.Updater.exe')
  if($LASTEXITCODE -ne 0){throw 'Aion2.Updater.exe rebrand failed'}
  $files=@(Get-ChildItem -LiteralPath $payload -File -Recurse)
- $expectedPackageFiles=@('Hexor-AION-Control-Center.exe','Aion2.Updater.exe');if($includeUpdater){$expectedPackageFiles=@('Hexor-AION-Control-Center.exe','Hexor.Updater.exe','Aion2.Updater.exe')}
+ $expectedPackageFiles=@('Hexor-AION-Control-Center.exe','Hexor.Updater.exe','Aion2.Updater.exe')
  if(($files.Count -ne $expectedPackageFiles.Count) -or (@($files | Where-Object Name -notin $expectedPackageFiles).Count)){throw 'Unexpected package files'}
  $expectedVersion=[version]$Version
  foreach($file in @($files | Where-Object Name -in @('Hexor-AION-Control-Center.exe','Hexor.Updater.exe'))){
@@ -93,7 +92,7 @@ try{
  # The OTA package always carries the console; the Hexor updater travels in it only when it
  # changed, and the rebranded vendor updater travels only in its own companion archive so
  # every installed version stays compatible.
- $hexorFiles=@($files | Where-Object Name -in (@('Hexor-AION-Control-Center.exe')+($(if($includeUpdater){@('Hexor.Updater.exe')}else{@()}))))
+ $hexorFiles=@($files | Where-Object Name -in @('Hexor-AION-Control-Center.exe','Hexor.Updater.exe'))
  Compress-Archive -LiteralPath $hexorFiles.FullName -DestinationPath $package
  # Companion release asset: the rebranded vendor updater, delivered as its own archive and
  # referenced from the signed manifest; installed consoles fetch it automatically.
@@ -121,7 +120,7 @@ try{
  $lightHash=(Get-FileHash -LiteralPath $lightZip -Algorithm SHA256).Hash.ToLowerInvariant()
  $lightUrl="https://github.com/$($github.Repository)/releases/download/v$Version/Hexor-$Version-light-win-x64.zip"
  $companionUrl="https://github.com/$($github.Repository)/releases/download/v$Version/Hexor-Aion2-Updater-$Version-win-x64.zip"
- $manifest=[ordered]@{SchemaVersion=1;Version=$Version;ReleaseDate=[DateTimeOffset]::UtcNow.ToString('O');DownloadUrl=$DownloadUrl;Sha256=$hash;ReleaseNotes=$notes;MinimumUpdaterVersion='1.0.0';Mandatory=[bool]$Mandatory;Aion2UpdaterUrl=$companionUrl;Aion2UpdaterSha256=$companionHash;LightDownloadUrl=$lightUrl;LightSha256=$lightHash;LightMinUpdaterVersion=$Version}
+ $manifest=[ordered]@{SchemaVersion=1;Version=$Version;ReleaseDate=[DateTimeOffset]::UtcNow.ToString('O');DownloadUrl=$DownloadUrl;Sha256=$hash;ReleaseNotes=$notes;MinimumUpdaterVersion='1.0.0';Mandatory=[bool]$Mandatory;Aion2UpdaterUrl=$companionUrl;Aion2UpdaterSha256=$companionHash;LightDownloadUrl=$lightUrl;LightSha256=$lightHash;LightMinUpdaterVersion='1.0.29'}
  $bytes=[Text.Encoding]::UTF8.GetBytes(($manifest | ConvertTo-Json -Compress))
  $signature=$rsa.SignData($bytes,[Security.Cryptography.HashAlgorithmName]::SHA256,[Security.Cryptography.RSASignaturePadding]::Pss)
  @{Payload=[Convert]::ToBase64String($bytes);Signature=[Convert]::ToBase64String($signature)} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $out 'latest.json') -Encoding utf8
