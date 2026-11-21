@@ -90,6 +90,7 @@ internal static class Program
    TestCheckpoint.Run(nameof(VendorUpdaterConsentTests),()=>VendorUpdaterConsentTests.Run(root,Assert),120);
    TestCheckpoint.Run(nameof(VendorOverlayCleanupTests),()=>VendorOverlayCleanupTests.Run(root,Assert),120);
    TestCheckpoint.Run(nameof(MenuStatusTests),()=>MenuStatusTests.Run(root,Assert),120);
+   TestCheckpoint.Run(nameof(DailySequenceIncidentTests),()=>DailySequenceIncidentTests.Run(Assert),120);
    TestCheckpoint.Run(nameof(AionInstallationDiscoveryTests),()=>AionInstallationDiscoveryTests.Run(root,Assert),120);
    TestCheckpoint.Run(nameof(CleanupWorkflowTests),()=>CleanupWorkflowTests.Run(root,Assert),120);
    TestCheckpoint.Run(nameof(UpdaterCacheCleanupTests),()=>UpdaterCacheCleanupTests.Run(root,Assert),120);

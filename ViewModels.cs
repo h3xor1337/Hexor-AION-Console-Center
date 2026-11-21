@@ -796,17 +796,24 @@ public sealed class MainViewModel : Observable, IDisposable
         catch { return string.Empty; }
     }
 
-    private async Task<JsonElement> CommanderCommandAsync(int processId, string operation, object? arguments)
+    private async Task<JsonElement> CommanderCommandAsync(int processId, string operation, object? arguments, string? commandId = null)
     {
         // Keys match the vendor console's serialization exactly (Newtonsoft default keeps
-        // PascalCase): Operation / Arguments / CommandId / ExpectedLuaVmGeneration.
+        // PascalCase): Operation / Arguments / CommandId / ExpectedLuaVmGeneration. Queries reuse
+        // the original command id the way the vendor console does.
         return await gameIpc.SendRuntimeRequestAsync(processId, "commander.command", new Dictionary<string, object?>
         {
             ["Operation"] = operation,
             ["Arguments"] = arguments ?? new { },
-            ["CommandId"] = Guid.NewGuid().ToString("N"),
+            ["CommandId"] = string.IsNullOrWhiteSpace(commandId) ? Guid.NewGuid().ToString("N") : commandId,
             ["ExpectedLuaVmGeneration"] = sequenceLuaVmGeneration,
         }).ConfigureAwait(false);
+    }
+
+    private static string? ReadCommandId(JsonElement result)
+    {
+        try { return result.ValueKind == JsonValueKind.Object && result.TryGetProperty("CommandId", out var node) && node.ValueKind == JsonValueKind.String ? node.GetString() : null; }
+        catch { return null; }
     }
 
     // The vendor allocates each character's daily floor-gold target as a random 93.0%-99.0%
@@ -828,6 +835,9 @@ public sealed class MainViewModel : Observable, IDisposable
     private async Task<ulong> ReadLuaVmGenerationAsync(int processId)
     {
         var snapshot = await gameIpc.SendRuntimeRequestAsync(processId, "commander.snapshot", new { }).ConfigureAwait(false);
+        // One-time diagnostic dump of the live snapshot schema (trimmed); drives the 1:1 daily parity work.
+        try { Diagnostics.Log("daily-sequence", "snapshot; " + JsonSerializer.Serialize(snapshot, JsonOptions.Default)[..Math.Min(2400, JsonSerializer.Serialize(snapshot, JsonOptions.Default).Length)]); }
+        catch (Exception) { }
         if (snapshot.ValueKind == JsonValueKind.Object)
         {
             foreach (var name in new[] { "LuaVmGeneration", "luaVmGeneration", "luaVMGeneration", "LuaVMGeneration" })
@@ -846,6 +856,165 @@ public sealed class MainViewModel : Observable, IDisposable
         catch (Exception e) { Diagnostics.Log("daily-sequence", "pipe-stop-failed; type=" + e.GetType().Name); }
     }
 
+    // 1:1 port of the vendor console's daily step dwell (DailyWorkflowService tick): poll the
+    // live snapshot and the running command every few seconds, and complete a step exactly the
+    // way the vendor does:
+    //   - Gathering accumulates the module's GatherActiveSeconds (guarded against loading gaps)
+    //     until the randomly allocated TargetMinutes elapse.
+    //   - Auto Dungeon / Auto Krao Dungeon are unbounded; they complete when the module reports
+    //     the running command "completed" through commander.command query.
+    //   - Kinah farming (floor gold) is unbounded; it completes when today's kinah reaches the
+    //     allocated share of the daily kinah limit.
+    // The same poll watches the module's incident list: the module freezes its automation ticks
+    // whenever its authorization becomes invalid (for example the automation card being signed
+    // in on another computer) and resumes by itself once authorization is restored, so the
+    // operator is told why the current action stopped instead of seeing an unexplained freeze.
+    // Authorization is enforced by the game module itself; Hexor only reports it.
+    private const int SequencePollSeconds = 5;
+    private async Task DwellStepAsync(int processId, Instruction step, string target, string label, string? commandId, bool finishing, CancellationToken token)
+    {
+        var targetMinutes = 0;
+        if (!finishing && target == "gather")
+            targetMinutes = Random.Shared.Next(Math.Clamp(step.MinimumMinutes, 1, 10080), Math.Clamp(Math.Max(step.MaximumMinutes, step.MinimumMinutes), 1, 10080) + 1);
+        double gatherElapsed = 0.0;
+        double lastGatherActive = -1.0;
+        var authorizationPaused = false;
+        var firstPoll = true;
+        string lastIncidents = string.Empty;
+        while (true)
+        {
+            token.ThrowIfCancellationRequested();
+            await Task.Delay(TimeSpan.FromSeconds(SequencePollSeconds), token);
+            var snapshot = await ReadDailySnapshotAsync(processId).ConfigureAwait(false);
+            var incidents = await gameIpc.TryListAutomationIncidentsAsync(processId).ConfigureAwait(false);
+            if (firstPoll)
+            {
+                firstPoll = false;
+                Diagnostics.Log("daily-sequence", "incidents-probe; " + (incidents == null ? "unavailable" : TrimForLog(incidents)));
+            }
+            var incidentPayload = IncidentsPayload(incidents);
+            if (incidentPayload == null)
+            {
+                if (authorizationPaused)
+                {
+                    authorizationPaused = false;
+                    Status = $"Authorization is back — the {label} step continues.";
+                    Diagnostics.Log("daily-sequence", "authorization-resumed; step=" + label);
+                }
+            }
+            else if (incidentPayload != lastIncidents)
+            {
+                lastIncidents = incidentPayload;
+                Diagnostics.Log("daily-sequence", "incidents; " + TrimForLog(incidentPayload));
+                if (DailySequenceIncidents.MentionsAuthorization(incidentPayload) && !authorizationPaused)
+                {
+                    authorizationPaused = true;
+                    Status = "The routine is paused: the game reports an authorization problem. The most common cause is the automation card being signed in on another computer — authorization on this computer ends while the card is in use elsewhere. Sign in again through the AION updater on this computer; the routine resumes by itself once the game allows automation again.";
+                    Diagnostics.Log("daily-sequence", "authorization-paused; step=" + label);
+                }
+            }
+            if (commandId != null)
+            {
+                var query = await CommanderCommandAsync(processId, "query", new { }, commandId).ConfigureAwait(false);
+                var queryStatus = ReadString(query, "Status");
+                if (string.Equals(queryStatus, "failed", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException(ReadString(query, "Error") ?? "the game reported the step failed");
+                if (string.Equals(queryStatus, "completed", StringComparison.OrdinalIgnoreCase)
+                    && (target is "auto_task" or "krao_dungeon" || finishing))
+                {
+                    LogStepCompleted(label, target, gatherElapsed);
+                    return;
+                }
+            }
+            if (target == "gather" && snapshot != null && ReadBool(snapshot.Value, "Gathering") == true)
+            {
+                var active = ReadDouble(snapshot.Value, "GatherActiveSeconds");
+                if (active != null)
+                {
+                    if (lastGatherActive >= 0)
+                    {
+                        var delta = active.Value - lastGatherActive;
+                        if (delta >= 0 && delta <= 20) gatherElapsed += delta;
+                    }
+                    lastGatherActive = active.Value;
+                }
+                if (!finishing && targetMinutes > 0 && gatherElapsed >= targetMinutes * 60)
+                {
+                    LogStepCompleted(label, target, gatherElapsed);
+                    return;
+                }
+            }
+            else if (target == "gather") { lastGatherActive = -1.0; }
+            if (target == "combat" && snapshot != null)
+            {
+                var kina = ReadLong(snapshot.Value, "DailyKina");
+                var limit = ReadLong(snapshot.Value, "DailyKinaLimit");
+                if (kina == null || limit == null) continue; // the vendor waits when the kinah values are unavailable
+                var permille = DailyGoldTargetPermille(ReadString(snapshot.Value, "Name") ?? "character");
+                if (kina.Value >= (long)Math.Ceiling(limit.Value * (permille / 1000.0)))
+                {
+                    LogStepCompleted(label, target, 0);
+                    return;
+                }
+            }
+            await Task.CompletedTask;
+        }
+    }
+
+    private void LogStepCompleted(string label, string target, double gatherSeconds)
+    {
+        Status = $"Sequence: {label} finished.";
+        Diagnostics.Log("daily-sequence", $"step-completed; label={label}; target={target}; gatherSeconds={gatherSeconds:F0}");
+    }
+
+    private async Task<JsonElement?> ReadDailySnapshotAsync(int processId)
+    {
+        try
+        {
+            var snapshot = await gameIpc.SendRuntimeRequestAsync(processId, "commander.snapshot", new { }).ConfigureAwait(false);
+            return snapshot.ValueKind == JsonValueKind.Object ? snapshot : null;
+        }
+        catch (Exception e) when (e is IOException or OperationCanceledException) { return null; }
+    }
+
+    private static string? ReadString(JsonElement element, string name)
+    {
+        try { return element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var node) && node.ValueKind == JsonValueKind.String ? node.GetString() : null; }
+        catch { return null; }
+    }
+    private static long? ReadLong(JsonElement element, string name)
+    {
+        try { return element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var node) && node.ValueKind == JsonValueKind.Number ? node.GetInt64() : null; }
+        catch { return null; }
+    }
+    private static double? ReadDouble(JsonElement element, string name)
+    {
+        try { return element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var node) && node.ValueKind == JsonValueKind.Number ? node.GetDouble() : null; }
+        catch { return null; }
+    }
+    private static bool? ReadBool(JsonElement element, string name)
+    {
+        try { return element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var node) && node.ValueKind is JsonValueKind.True or JsonValueKind.False ? node.GetBoolean() : null; }
+        catch { return null; }
+    }
+
+    // Incidents arrive as an envelope with a live timestamp; dedupe on the incident array only
+    // so unchanged incident sets are not re-logged every poll.
+    private static string? IncidentsPayload(string? incidents)
+    {
+        if (string.IsNullOrWhiteSpace(incidents)) return null;
+        try
+        {
+            var envelope = JsonSerializer.Deserialize<JsonObject>(incidents, JsonOptions.Default);
+            if (envelope == null) return null;
+            if (envelope["incidents"] is not JsonArray array || array.Count == 0) return null;
+            return JsonSerializer.Serialize(array, JsonOptions.Default);
+        }
+        catch (Exception) { return incidents; }
+    }
+
+    private static string TrimForLog(string value) => value.Length <= 600 ? value : value[..600] + "…";
+
     public async Task StartDailySequenceAsync()
     {
         var session = ConnectedGameSession();
@@ -857,6 +1026,13 @@ public sealed class MainViewModel : Observable, IDisposable
         if (sequenceRun != null) { Status = "The sequence is already running; press Stop first."; return; }
         var steps = Preferences.Instructions.Where(i => i.Enabled && i.Type != InstructionType.SwitchCharacter).ToList();
         if (steps.Count == 0) { Status = "Enable at least one instruction before starting the sequence."; return; }
+        sequencePid = session.ProcessId;
+        if (sequenceDayKey != null && Enumerable.Range(0, steps.Count).All(i => completedStepsToday.Contains(sequenceDayKey + "|" + i)))
+        {
+            Status = "The daily sequence for this character already finished today. The steps reset with the game's daily reset.";
+            Diagnostics.Log("daily-sequence", "start-refused; reason=already-completed-today");
+            return;
+        }
         try
         {
             sequenceLuaVmGeneration = await ReadLuaVmGenerationAsync(session.ProcessId);
@@ -874,20 +1050,28 @@ public sealed class MainViewModel : Observable, IDisposable
         await Task.CompletedTask;
     }
 
+    // 1:1 port of the vendor daily run loop: start each enabled step in order, wait for the
+    // vendor's own completion signals (see DwellStepAsync), stop the current activity before the
+    // next one with the vendor's exact reason wording, and then apply the chosen after-finish
+    // behaviour: "Start gathering" re-runs every enabled step unbounded so the character stays
+    // online and busy, and "Close the game" stops everything and closes the game (the vendor
+    // closes it as part of rotating to the next account; Hexor has a single machine account).
+    // The vendor also skips steps that already completed earlier in the same game day.
     private async Task RunSequenceAsync(List<Instruction> steps, int processId, CancellationToken token)
     {
         try
         {
-            // The vendor clears any previous activity, then starts each enabled step in order and
-            // gives it its configured duration before moving on.
-            await StopActivityAsync(processId, "sequence start");
-            await Task.Delay(500, token);
             var hasFloorGold = steps.Any(s => s.Type == InstructionType.KinahFarming);
             for (var index = 0; index < steps.Count; index++)
             {
                 token.ThrowIfCancellationRequested();
                 var step = steps[index];
                 var (target, label) = StepTarget(step.Type);
+                if (!finishing && sequenceDayKey != null && completedStepsToday.Contains(sequenceDayKey + "|" + index))
+                {
+                    Diagnostics.Log("daily-sequence", $"step-skipped; label={label}; reason=already-completed-today");
+                    continue;
+                }
                 var fresh = gameIpc.Sessions().FirstOrDefault(s => s.ProcessId == processId && s.ClientConnected && s.PipeOwnedByHexor);
                 var arguments = new Dictionary<string, object?>
                 {
@@ -896,26 +1080,43 @@ public sealed class MainViewModel : Observable, IDisposable
                     ["QueueFloorGold"] = hasFloorGold,
                     ["QueueFloorGoldSmartPatrol"] = steps.FirstOrDefault(s => s.Type == InstructionType.KinahFarming)?.SmartPatrol ?? false,
                 };
-                var started = await CommanderCommandAsync(processId, target, arguments);
+                var started = await CommanderCommandAsync(processId, target, arguments).ConfigureAwait(false);
+                var commandId = ReadCommandId(started);
                 var detail = DescribeCommandResult(started);
                 Status = $"Sequence: {label} started ({index + 1} of {steps.Count}).";
-                Diagnostics.Log("daily-sequence", $"step; pid={processId}; label={label}; target={target}; {detail}");
+                Diagnostics.Log("daily-sequence", $"step; pid={processId}; label={label}; target={target}; {detail}; commandId={commandId}");
                 if (detail.Contains("status=failed", StringComparison.Ordinal))
-                {
-                    Status = $"The {label} step was rejected by the game. {detail}";
-                }
+                    throw new InvalidOperationException("the " + label + " step was rejected by the game: " + detail);
                 RebuildGameIpcUi();
-                var minutes = Math.Clamp(step.MinimumMinutes > 0 ? step.MinimumMinutes : 1, 1, 10080);
-                await Task.Delay(TimeSpan.FromMinutes(minutes), token);
+                await DwellStepAsync(processId, step, target, label, commandId, finishing, token).ConfigureAwait(false);
+                if (sequenceDayKey != null) completedStepsToday.Add(sequenceDayKey + "|" + index);
                 if (index < steps.Count - 1)
                 {
-                    await StopActivityAsync(processId, "next step");
+                    await StopActivityAsync(processId, "中控：当前指令完成，进入下一条").ConfigureAwait(false);
                     await Task.Delay(500, token);
                 }
             }
-            await StopActivityAsync(processId, "sequence finished");
-            Status = "Sequence finished.";
-            Diagnostics.Log("daily-sequence", "completed; pid=" + processId);
+            if (finishing)
+            {
+                await FinishRunAsync(processId, token).ConfigureAwait(false);
+                return;
+            }
+            if (Enum.TryParse<CompletionAction>(Preferences.AfterFinish, out var finish) && finish == CompletionAction.NextAccount)
+            {
+                // The vendor closes the game as part of switching accounts. Hexor has no account
+                // rotation, so the operator's "Close the game" choice closes the game now.
+                await FinishRunAsync(processId, token).ConfigureAwait(false);
+                Status = "Sequence finished. Closing the game.";
+                Diagnostics.Log("daily-sequence", "finish; kind=NextAccount; closing game");
+                CloseGameWindow(processId);
+                return;
+            }
+            // "Start gathering": the vendor re-runs the workflow unbounded on the finishing
+            // character so the character stays online and busy.
+            finishing = true;
+            Diagnostics.Log("daily-sequence", "finish; kind=GatherOnCharacter; re-running steps unbounded");
+            await RunSequenceAsync(steps, processId, token);
+            return;
         }
         catch (OperationCanceledException) { }
         catch (Exception e)
@@ -924,6 +1125,44 @@ public sealed class MainViewModel : Observable, IDisposable
             Diagnostics.Log("daily-sequence", "sequence-failed; type=" + e.GetType().Name);
         }
         finally { sequenceRun = null; RebuildGameIpcUi(); }
+    }
+
+    private bool finishing;
+
+    // Per (game process, day) memory of steps the vendor algorithm already completed today.
+    private readonly HashSet<string> completedStepsToday = new();
+    private string? sequenceDayKey => sequencePid == 0 ? null : sequencePid + "|" + DateTimeOffset.Now.ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture);
+
+    // The vendor's finish flow: stop every machine with its exact reason wording, mark the run
+    // completed, and (for account rotation) close the current game.
+    private async Task FinishRunAsync(int processId, CancellationToken token)
+    {
+        await StopActivityAsync(processId, "中控：全角色日常完成").ConfigureAwait(false);
+        Status = "Sequence finished.";
+        Diagnostics.Log("daily-sequence", "completed; pid=" + processId);
+        await Task.CompletedTask;
+    }
+
+    private static void CloseGameWindow(int processId)
+    {
+        try
+        {
+            foreach (var process in System.Diagnostics.Process.GetProcessesByName("Aion2"))
+            {
+                using (process)
+                {
+                    if (process.Id != processId) continue;
+                    if (process.CloseMainWindow())
+                        Diagnostics.Log("daily-sequence", "game-close; requested");
+                    else
+                        Diagnostics.Log("daily-sequence", "game-close; refused");
+                }
+            }
+        }
+        catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            Diagnostics.Log("daily-sequence", "game-close-failed; type=" + e.GetType().Name);
+        }
     }
 
     public async Task StopDailySequenceAsync()
@@ -1540,6 +1779,24 @@ public sealed class MainViewModel : Observable, IDisposable
         lifetime.Cancel();
         lifetime.Dispose();
     }
+}
+
+// The module's automation incident list is free-form JSON whose schema may change; authorization
+// problems (card signed in on another computer, revoked session) are what freeze the automation
+// ticks, so classification stays keyword-based on the stable module error names and messages.
+internal static class DailySequenceIncidents
+{
+    public static bool MentionsAuthorization(string incidents) => incidents is not null && (
+        incidents.Contains("authorization", StringComparison.OrdinalIgnoreCase) ||
+        incidents.Contains("授权", StringComparison.Ordinal) ||
+        incidents.Contains("auth_not_authorized", StringComparison.OrdinalIgnoreCase) ||
+        incidents.Contains("KEY_REPLACED", StringComparison.Ordinal) ||
+        incidents.Contains("SESSION_REVOKED", StringComparison.Ordinal) ||
+        incidents.Contains("TOKEN_SUPERSEDED", StringComparison.Ordinal) ||
+        incidents.Contains("RELOGIN_REQUIRED", StringComparison.Ordinal) ||
+        incidents.Contains("KEY_PROOF_FAILED", StringComparison.Ordinal) ||
+        incidents.Contains("CARD_EXPIRED", StringComparison.Ordinal) ||
+        incidents.Contains("CARD_DISABLED", StringComparison.Ordinal));
 }
 
 public sealed class LiveSessionRowViewModel

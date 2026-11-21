@@ -220,6 +220,23 @@ public sealed class GameIpcService : IDisposable
         finally { lock (gate) runtimeCalls.Remove(requestId); }
     }
 
+    // The module raises automation incidents (authorization loss among them) that freeze its
+    // state-machine ticks; the vendor console lists them to explain pauses. Hexor reads the
+    // same list so the operator learns why a routine stopped mid-action instead of seeing an
+    // unexplained freeze. Returns null when the call is unavailable or the pipe is not owned.
+    public async Task<string?> TryListAutomationIncidentsAsync(TimeSpan? timeout = null, CancellationToken? stop = null)
+    {
+        try
+        {
+            var response = await SendRuntimeRequestAsync("automation.incidents.list", new { }, timeout, stop).ConfigureAwait(false);
+            return JsonSerializer.Serialize(response, JsonOptions.Default);
+        }
+        catch (Exception e) when (e is IOException or OperationCanceledException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
     private void CompleteRuntimeResponse(byte[] payload)
     {
         try
@@ -428,6 +445,15 @@ public sealed class GameIpcManager : IDisposable
         if (service == null || !service.PipeOwnedByHexor || !service.ClientConnected)
             throw new IOException($"No direct game IPC connection for PID {processId}.");
         return await service.SendRuntimeRequestAsync(method, parameters, timeout, stop).ConfigureAwait(false);
+    }
+
+    // Authorization/incident reporting pass-through; null when there is no owned session.
+    public async Task<string?> TryListAutomationIncidentsAsync(int processId, TimeSpan? timeout = null, CancellationToken? stop = null)
+    {
+        GameIpcService? service;
+        lock (gate) services.TryGetValue(processId, out service);
+        if (service == null || !service.PipeOwnedByHexor || !service.ClientConnected) return null;
+        return await service.TryListAutomationIncidentsAsync(timeout, stop).ConfigureAwait(false);
     }
 
     private async Task WatchAsync(CancellationToken stop)
