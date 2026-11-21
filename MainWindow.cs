@@ -219,9 +219,10 @@ public sealed class MainWindow : Window
   language.Children.Add(Button("Save language preference",Model.SaveOriginalUiLanguage));
 
   var module=Section(root,"Bot module","File detection reports whether the verified menu DLL is installed. It does not claim the DLL is loaded into AION2.");
-  var menuRow=new WrapPanel{Orientation=Orientation.Horizontal};var unload=Button("Unload Menu",async()=>await UnloadMenuAsync());unload.Name="UnloadMenuButton";unload.Background=Brush("#6942A8");unload.Margin=new Thickness(0,4,16,4);menuRow.Children.Add(unload);
+  var menuRow=new WrapPanel{Orientation=Orientation.Horizontal};var unload=Button("Unload menu (this installation)",async()=>await UnloadMenuAsync());unload.Name="UnloadMenuButton";unload.Margin=new Thickness(0,4,16,4);menuRow.Children.Add(unload);
   menuStatusText=Text(menuStatus.Text,13,true,"#DCC8FF");menuStatusText.Name="MenuStatusText";menuStatusText.Margin=new Thickness(16,10,0,5);menuStatusText.VerticalAlignment=VerticalAlignment.Center;menuRow.Children.Add(menuStatusText);module.Children.Add(menuRow);
-  module.Children.Add(Text("Removing deletes the automation module (dxgi.dll) that AION2 loads, and verified updater-owned data. Hexor Control Center remains installed; use Windows Settings to uninstall it.",12,false,"#AEA5C0"));
+  module.Children.Add(Text("Unloading removes or restores the automation module (dxgi.dll) only for the installation reported in the status line above.",12,false,"#AEA5C0"));
+  module.Children.Add(Text("Removing covers every detected AION2 installation and also deletes verified updater-owned data and caches. Hexor Control Center remains installed; use Windows Settings to uninstall it.",12,false,"#AEA5C0"));
   var clean=Button("Remove Bot Module",async()=>await RunCleanupAsync());clean.Name="RemoveBotModuleButton";clean.Background=Brush("#69284A");clean.Margin=new Thickness(0,4,0,0);module.Children.Add(clean);
 
   var folder=Section(root,"Settings folder","Choose your existing settings folder. Changes are saved only when you edit or apply a setting.");
