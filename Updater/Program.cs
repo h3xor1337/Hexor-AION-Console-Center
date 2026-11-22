@@ -22,7 +22,8 @@ try
  var manifest=UpdateCore.Verify(File.ReadAllText(args[1]),Trust.Load().PublicKeyPem);
  // The console may hand over the light package when this helper understands it; verify against
  // the matching hash instead of assuming the full package.
- var useLight=UpdateCore.UseLightPackage(manifest,FileVersionInfo.GetVersionInfo(Environment.ProcessPath!));
+ var helperVersion=FileVersionInfo.GetVersionInfo(Environment.ProcessPath!);
+ var useLight=UpdateCore.UseLightPackage(manifest,new Version(helperVersion.FileMajorPart,helperVersion.FileMinorPart,helperVersion.FileBuildPart));
  UpdateCore.VerifyPackage(args[2],useLight?manifest.LightSha256!:manifest.Sha256);
  using var gate=new Mutex(false,UpdateCore.GateName(install));
  if(!gate.WaitOne(0))throw new IOException("Another Hexor update is running.");
