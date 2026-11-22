@@ -68,6 +68,7 @@ static void WriteCompanion(string zipPath,string content){using var zip=ZipFile.
  Check(UpdateCore.UseLightPackage(lm,new Version(1,0,29)),"light package selected for a light-capable helper");
  Check(!UpdateCore.UseLightPackage(lm,new Version(1,0,28)),"light package refused for an older helper");
  Check(!UpdateCore.UseLightPackage(cm,new Version(1,0,29)),"light package refused without light fields");
+ Check(!UpdateCore.UseLightPackage(lm with{LightMinUpdaterVersion="1.0.31"},new Version(1,0,30)),"light package refused for helpers shipped before the light-aware package verification");
  foreach(var name in UpdateCore.OwnedFiles)File.WriteAllText(Path.Combine(install,name),"MZold release");
  UpdateCore.Install(install,Path.Combine(root,"light-stage"));Check(File.ReadAllText(Path.Combine(install,UpdateCore.OwnedFiles[0]))=="MZnew console"&&File.ReadAllText(Path.Combine(install,UpdateCore.OwnedFiles[1]))=="MZold release","light package replaces only the console");
  File.WriteAllText(Path.Combine(install,".hexor-update","pending"),UpdateCore.OwnedFiles[0]);UpdateCore.Recover(install);Check(File.ReadAllText(Path.Combine(install,UpdateCore.OwnedFiles[0]))=="MZold release"&&File.ReadAllText(Path.Combine(install,UpdateCore.OwnedFiles[1]))=="MZold release","light transaction journal restores only its own file");

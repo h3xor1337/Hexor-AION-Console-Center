@@ -120,7 +120,7 @@ try{
  $lightHash=(Get-FileHash -LiteralPath $lightZip -Algorithm SHA256).Hash.ToLowerInvariant()
  $lightUrl="https://github.com/$($github.Repository)/releases/download/v$Version/Hexor-$Version-light-win-x64.zip"
  $companionUrl="https://github.com/$($github.Repository)/releases/download/v$Version/Hexor-Aion2-Updater-$Version-win-x64.zip"
- $manifest=[ordered]@{SchemaVersion=1;Version=$Version;ReleaseDate=[DateTimeOffset]::UtcNow.ToString('O');DownloadUrl=$DownloadUrl;Sha256=$hash;ReleaseNotes=$notes;MinimumUpdaterVersion='1.0.0';Mandatory=[bool]$Mandatory;Aion2UpdaterUrl=$companionUrl;Aion2UpdaterSha256=$companionHash;LightDownloadUrl=$lightUrl;LightSha256=$lightHash;LightMinUpdaterVersion='1.0.29'}
+ $manifest=[ordered]@{SchemaVersion=1;Version=$Version;ReleaseDate=[DateTimeOffset]::UtcNow.ToString('O');DownloadUrl=$DownloadUrl;Sha256=$hash;ReleaseNotes=$notes;MinimumUpdaterVersion='1.0.0';Mandatory=[bool]$Mandatory;Aion2UpdaterUrl=$companionUrl;Aion2UpdaterSha256=$companionHash;LightDownloadUrl=$lightUrl;LightSha256=$lightHash;LightMinUpdaterVersion='1.0.31'}
  $bytes=[Text.Encoding]::UTF8.GetBytes(($manifest | ConvertTo-Json -Compress))
  $signature=$rsa.SignData($bytes,[Security.Cryptography.HashAlgorithmName]::SHA256,[Security.Cryptography.RSASignaturePadding]::Pss)
  @{Payload=[Convert]::ToBase64String($bytes);Signature=[Convert]::ToBase64String($signature)} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $out 'latest.json') -Encoding utf8

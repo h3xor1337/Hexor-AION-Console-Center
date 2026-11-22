@@ -19,7 +19,11 @@ try
  if(args.Length!=5)throw new ArgumentException("Expected install directory, manifest, package, parent PID, restart flag.");
  var install=Path.GetFullPath(args[0]);UpdateCore.NoLinks(install);
  // The helper is copied out of the installation before launch so it can update itself.
- var manifest=UpdateCore.Verify(File.ReadAllText(args[1]),Trust.Load().PublicKeyPem);UpdateCore.VerifyPackage(args[2],manifest);
+ var manifest=UpdateCore.Verify(File.ReadAllText(args[1]),Trust.Load().PublicKeyPem);
+ // The console may hand over the light package when this helper understands it; verify against
+ // the matching hash instead of assuming the full package.
+ var useLight=UpdateCore.UseLightPackage(manifest,FileVersionInfo.GetVersionInfo(Environment.ProcessPath!));
+ UpdateCore.VerifyPackage(args[2],useLight?manifest.LightSha256!:manifest.Sha256);
  using var gate=new Mutex(false,UpdateCore.GateName(install));
  if(!gate.WaitOne(0))throw new IOException("Another Hexor update is running.");
  try
