@@ -366,7 +366,7 @@ public sealed class MainViewModel : Observable, IDisposable
     public Detection Detection { get => detection; private set { if(Set(ref detection, value)) { Changed(nameof(GameStatus)); Changed(nameof(CustomerConfigurationStatus)); } } }
     // Computed status strings are localized at read time; after a UI language change the
     // bindings must be told to re-read them.
-    public void RefreshLocalizedStatuses() => Refresh(nameof(GameStatus), nameof(CustomerConfigurationStatus), nameof(CaptchaStatusText), nameof(CaptchaDiagnostics), nameof(CaptchaRecordsSummary), nameof(CustomerStatus), nameof(UpdateStatus));
+    public void RefreshLocalizedStatuses() { UpdateCaptchaAutoStatus(); Refresh(nameof(GameStatus), nameof(CustomerConfigurationStatus), nameof(CaptchaStatusText), nameof(CaptchaDiagnostics), nameof(CaptchaRecordsSummary), nameof(CustomerStatus), nameof(UpdateStatus)); }
     private Instruction? selectedInstruction;
     public Instruction? SelectedInstruction { get => selectedInstruction; set => Set(ref selectedInstruction, value); }
     public string GatherMin { get; set; }
@@ -748,7 +748,7 @@ public sealed class MainViewModel : Observable, IDisposable
         }
         var text = captchaSolver.Describe();
         if (!gameIpc.Sessions().Any(s => s.ClientConnected && s.PipeOwnedByHexor))
-            text += "\nThe auto-resolve listens while a game session is connected.";
+            text += "\n" + Hexor.Translations.Localize("The auto-resolve listens while a game session is connected.");
         CaptchaAutoStatus = text;
     }
 
@@ -1413,7 +1413,7 @@ public sealed class MainViewModel : Observable, IDisposable
             Preferences.ScheduleEnabled = schedule.Enabled; MaxAccounts = schedule.Accounts.ToString();
             WorkMin = schedule.WorkMin.ToString(); WorkMax = schedule.WorkMax.ToString(); RestMin = schedule.RestMin.ToString(); RestMax = schedule.RestMax.ToString();
             OriginalUiCulture = document.Value("UserLanguage") ?? "zh-CN";
-            Preferences.GameLanguage = document.Value("GameLanguage") switch { "en-US" => "English", "ko-KR" => "Korean", _ => "Traditional Chinese" };
+            Preferences.GameLanguage = document.Value("GameLanguage") switch { "en-US" => "English", "ko-KR" => "Korean", "zh-TW" => "Traditional Chinese", "zh-CN" => "Simplified Chinese", "ja-JP" => "Japanese", "de-DE" => "German", "ru-RU" => "Russian", "es-ES" => "Spanish", "pt-BR" => "Portuguese", "fr-FR" => "French", "it-IT" => "Italian", _ => "Traditional Chinese" };
             LoadPlan(document.EffectiveWorkflow);
             machine = session.Machine;
             if (machine.Availability == ConfigurationAvailability.Ready)
@@ -1590,7 +1590,7 @@ public sealed class MainViewModel : Observable, IDisposable
     {
         try
         {
-            if (session != null) session.SaveLanguage("GameLanguage", language switch { "English" => "en-US", "Korean" => "ko-KR", "Traditional Chinese" => "zh-TW", _ => throw new InvalidDataException("Unsupported language.") });
+            if (session != null) session.SaveLanguage("GameLanguage", language switch { "English" => "en-US", "Korean" => "ko-KR", "Traditional Chinese" => "zh-TW", "Simplified Chinese" => "zh-CN", "Japanese" => "ja-JP", "German" => "de-DE", "Russian" => "ru-RU", "Spanish" => "es-ES", "Portuguese" => "pt-BR", "French" => "fr-FR", "Italian" => "it-IT", _ => throw new InvalidDataException("Unsupported language.") });
             Preferences.GameLanguage = language;
             if (session == null) return Save();
             Status = "Game language preference saved and verified; applies to supported launch arguments, not a live language switch."; return true;
