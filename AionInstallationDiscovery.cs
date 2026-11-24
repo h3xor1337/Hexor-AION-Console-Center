@@ -16,10 +16,13 @@ public sealed class AionInstallationDiscoveryService
     public IReadOnlyList<AionInstallation> DiscoverOnFixedDrives(IEnumerable<string>? roots=null)
     {
         var scanRoots=roots??DriveInfo.GetDrives().Where(d=>d.DriveType==DriveType.Fixed&&d.IsReady).Select(d=>d.RootDirectory.FullName);var found=new List<AionInstallation>();
-        foreach(var root in scanRoots.Where(Directory.Exists))foreach(var exe in FindExecutables(root)) { var install=Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(exe)! )!)!)!; if(VerifyUserSelectedInstallation(install) is { } valid) found.Add(valid with { Client=AionInstallationClient.Unknown, Evidence="Validated fixed-drive scan"}); }
+        // Directory-only, depth-bounded scan: enumerating every file on every fixed drive takes
+        // minutes on large drives and made the removal button look frozen. Game folders are found
+        // by their AION2 folder shape (any layout), then validated by the executable path.
+        foreach(var root in scanRoots.Where(Directory.Exists))foreach(var candidate in FindGameFolders(root)) { var install=VerifyUserSelectedInstallation(candidate); if(install is { } valid) found.Add(valid with { Client=AionInstallationClient.Unknown, Evidence="Validated fixed-drive scan"}); }
         return found.DistinctBy(x=>x.InstallationDirectory,StringComparer.OrdinalIgnoreCase).ToArray();
     }
-    private static IEnumerable<string> FindExecutables(string root){var found=new List<string>();var pending=new Stack<string>();pending.Push(root);while(pending.Count>0){IEnumerable<string> entries;try{entries=Directory.EnumerateFileSystemEntries(pending.Pop());}catch{continue;}foreach(var entry in entries){try{if((File.GetAttributes(entry)&FileAttributes.ReparsePoint)!=0)continue;if(Directory.Exists(entry))pending.Push(entry);else if(Path.GetFileName(entry).Equals("Aion2.exe",StringComparison.OrdinalIgnoreCase))found.Add(entry);}catch{}}}return found;}
+    private static IEnumerable<string> FindGameFolders(string root){var found=new List<string>();var pending=new Stack<(string Path,int Depth)>();pending.Push((root,0));while(pending.Count>0){var(current,depth)=pending.Pop();IEnumerable<string> entries;try{entries=Directory.EnumerateDirectories(current);}catch{continue;}foreach(var entry in entries){try{if((File.GetAttributes(entry)&FileAttributes.ReparsePoint)!=0)continue;var name=Path.GetFileName(entry);if(name.Equals("AION2",StringComparison.OrdinalIgnoreCase)){var exe=Path.Combine(entry,"Aion2","Binaries","Win64","Aion2.exe");if(File.Exists(exe)){found.Add(entry);continue;}}if(depth<6)pending.Push((entry,depth+1));}catch{}}}return found;}
     public IReadOnlyList<AionInstallation> DiscoverFromSteamLibraries(IEnumerable<string> steamLibraries)
     {
         var found = new List<AionInstallation>();

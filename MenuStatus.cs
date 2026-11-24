@@ -3,7 +3,7 @@ using System.IO;
 
 namespace Hexor;
 
-public enum MenuStatusState { Checking, MenuDetected, NotDetected, GameRunning, MultipleInstallations, VerificationRequired, Error }
+public enum MenuStatusState { Checking, MenuDetected, MenuUnloaded, NotDetected, GameRunning, MultipleInstallations, VerificationRequired, Error }
 public sealed record MenuStatusResult(MenuStatusState State, string Text, string? GameExecutablePath = null, string? TargetPath = null);
 
 public sealed class MenuStatusService
@@ -29,14 +29,15 @@ public sealed class MenuStatusService
             if (candidates.Length > 1) return new(MenuStatusState.MultipleInstallations, Translations.Localize("Multiple installations — select the correct AION2 installation."));
             if (candidates.Length == 0) return new(MenuStatusState.NotDetected, Translations.Localize("Not detected"));
             var installation = candidates[0];
-            if (!File.Exists(installation.OverlayPath)) return new(MenuStatusState.NotDetected, Translations.Localize("Not detected"), installation.ExecutablePath, installation.OverlayPath);
-            var inspection = cleanup.Inspect(installation.ExecutablePath, manifestPath);
-            if (inspection.State == VendorOverlayCleanupState.CouldNotVerify)
-                { Diagnostics.Log("menu-status", "ownership-unverified; reason=" + inspection.Message); return new(MenuStatusState.VerificationRequired, Translations.Localize("Verification required — menu ownership or installation path is uncertain."), installation.ExecutablePath, installation.OverlayPath); }
-            if (inspection.State != VendorOverlayCleanupState.Skipped || !inspection.Message.StartsWith("Verified", StringComparison.Ordinal))
-                return new(MenuStatusState.Error, Translations.Localize(Translations.Localize("Error — menu status could not be determined.")), installation.ExecutablePath, installation.OverlayPath);
-            if (gameRunning()) return new(MenuStatusState.GameRunning, Translations.Localize("Game running — close AION2 before unloading the menu."), installation.ExecutablePath, installation.OverlayPath);
-            return new(MenuStatusState.MenuDetected, Translations.Localize("Menu detected"), installation.ExecutablePath, installation.OverlayPath);
+            var backupPath = installation.OverlayPath + VendorOverlayCleanupService.UnloadedSuffix;
+            // File presence decides the status; the ownership manifest only ever gated the old
+            // updater-chain evidence and must not hide an installed module from the customer.
+            var dllPresent = File.Exists(installation.OverlayPath);
+            var backupPresent = File.Exists(backupPath);
+            if (dllPresent && gameRunning()) return new(MenuStatusState.GameRunning, Translations.Localize("Game running — close AION2 before unloading the menu."), installation.ExecutablePath, installation.OverlayPath);
+            if (dllPresent) return new(MenuStatusState.MenuDetected, Translations.Localize("Menu detected"), installation.ExecutablePath, installation.OverlayPath);
+            if (backupPresent) return new(MenuStatusState.MenuUnloaded, Translations.Localize("Menu unloaded — click Restore to bring it back."), installation.ExecutablePath, backupPath);
+            return new(MenuStatusState.NotDetected, Translations.Localize("Not detected"), installation.ExecutablePath, installation.OverlayPath);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
@@ -46,13 +47,17 @@ public sealed class MenuStatusService
         }
     }
 
-    public VendorOverlayCleanupResult Unload(MenuStatusResult status, string manifestPath)
+    // Unload is a temporary, reversible removal: the module file is renamed beside the game so
+    // AION2 can no longer load it, and Restore moves it back. No ownership manifest is required.
+    public VendorOverlayCleanupResult UnloadOrRestore(MenuStatusResult status)
     {
         if (status.State == MenuStatusState.GameRunning)
             return new(VendorOverlayCleanupState.BlockedByRunningProcess, status.TargetPath ?? "", "Close AION2 before unloading the menu.");
-        if (status.State != MenuStatusState.MenuDetected || string.IsNullOrWhiteSpace(status.GameExecutablePath))
-            return new(VendorOverlayCleanupState.CouldNotVerify, status.TargetPath ?? "", "A single verified installed menu is required before unloading.");
-        return cleanup.Execute(status.GameExecutablePath, manifestPath);
+        if (status.State == MenuStatusState.MenuDetected && !string.IsNullOrWhiteSpace(status.GameExecutablePath))
+            return cleanup.UnloadTemporary(status.GameExecutablePath);
+        if (status.State == MenuStatusState.MenuUnloaded && !string.IsNullOrWhiteSpace(status.GameExecutablePath))
+            return cleanup.RestoreTemporary(status.GameExecutablePath);
+        return new(VendorOverlayCleanupState.CouldNotVerify, status.TargetPath ?? "", "A single verified installed menu is required before unloading.");
     }
 
     private static bool IsGameRunning()

@@ -14,6 +14,10 @@ public sealed record VendorOverlayOwnershipManifest(string InstallationDirectory
 public sealed class VendorOverlayCleanupService
 {
     public const string ManifestName = "vendor-overlay-ownership.json";
+    // Temporary unload renames the module beside the game with this suffix; Restore moves it back.
+    public const string UnloadedSuffix = ".hexor-unloaded";
+    private static readonly string[] BlockingProcesses = ["Aion2", "Aion2.Updater", "Aion2Updater.Launcher", "LegionCommander"];
+    private bool AnyBlockingProcessRunning() => BlockingProcesses.Any(processRunning);
     // Single source of truth for the companion updater file name; VendorUpdaterManager reuses it.
     public const string UpdaterExecutableName = "Aion2.Updater.exe";
     // Wired by the console to the application log; test projects run without a logger.
@@ -83,6 +87,44 @@ public sealed class VendorOverlayCleanupService
         {
             Log("updater-evidence-refresh-failed; type=" + e.GetType().Name);
         }
+    }
+
+    // Temporary unload: rename the verified module beside the game so AION2 cannot load it,
+    // with no ownership manifest and no deletion. Restore moves it back unchanged.
+    public VendorOverlayCleanupResult UnloadTemporary(string gameExecutablePath)
+    {
+        var target = ResolveTarget(gameExecutablePath);
+        if (target == null || !File.Exists(target)) return new(VendorOverlayCleanupState.CouldNotVerify, target ?? "", "A verified AION2 Win64 dxgi.dll is required before unloading.");
+        if (AnyBlockingProcessRunning()) return new(VendorOverlayCleanupState.BlockedByRunningProcess, target, "Close AION2, the original updater, its launcher, and Legion Commander before cleanup.");
+        var backup = target + UnloadedSuffix;
+        if (File.Exists(backup)) return new(VendorOverlayCleanupState.CouldNotVerify, backup, "An unloaded module backup already exists; restore it first.");
+        try
+        {
+            File.Move(target, backup);
+            return File.Exists(target)
+                ? new(VendorOverlayCleanupState.Failed, target, "The menu module could not be unloaded.")
+                : new(VendorOverlayCleanupState.Removed, backup, "The menu module was unloaded (temporarily removed). Use Restore to bring it back.");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        { return new(VendorOverlayCleanupState.Failed, target, "The menu module could not be changed: " + e.GetType().Name + "."); }
+    }
+
+    public VendorOverlayCleanupResult RestoreTemporary(string gameExecutablePath)
+    {
+        var target = ResolveTarget(gameExecutablePath);
+        if (target == null) return new(VendorOverlayCleanupState.CouldNotVerify, "", "A verified AION2 Win64 installation path is required.");
+        var backup = target + UnloadedSuffix;
+        if (!File.Exists(backup)) return new(VendorOverlayCleanupState.CouldNotVerify, backup, "No unloaded module backup exists to restore.");
+        if (File.Exists(target)) return new(VendorOverlayCleanupState.CouldNotVerify, target, "dxgi.dll already exists beside the unloaded backup.");
+        try
+        {
+            File.Move(backup, target);
+            return File.Exists(backup)
+                ? new(VendorOverlayCleanupState.Failed, backup, "The menu module could not be restored.")
+                : new(VendorOverlayCleanupState.Restored, target, "The menu module was restored.");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        { return new(VendorOverlayCleanupState.Failed, backup, "The menu module could not be changed: " + e.GetType().Name + "."); }
     }
 
     public VendorOverlayCleanupResult Execute(string gameExecutablePath, string manifestPath)

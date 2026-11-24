@@ -20,6 +20,8 @@ public sealed class MainWindow : Window
 
  private readonly MenuStatusService menuStatusService=new();
  private MenuStatusResult menuStatus=new(MenuStatusState.Checking,"Checking — installation discovery in progress");
+ private System.Windows.Controls.Button? unloadButton;
+ private IReadOnlyList<AionInstallation>? scanCache;private DateTime scanCacheTime;
  private TextBlock? menuStatusText;
  private CancellationTokenSource? menuRefresh;
  private readonly TaskCompletionSource initialLoadCompletion=new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -236,11 +238,11 @@ public sealed class MainWindow : Window
   language.Children.Add(Button("Save language preference",Model.SaveOriginalUiLanguage));
 
   var module=Section(root,"Bot module","File detection reports whether the verified menu DLL is installed. It does not claim the DLL is loaded into AION2.");
-  var menuRow=new WrapPanel{Orientation=Orientation.Horizontal};var unload=Button("Unload menu (this installation)",async()=>await UnloadMenuAsync());unload.Name="UnloadMenuButton";unload.Margin=new Thickness(0,4,16,4);menuRow.Children.Add(unload);
+  var menuRow=new WrapPanel{Orientation=Orientation.Horizontal};var unload=Button("Unload menu (this installation)",async()=>await UnloadMenuAsync());unload.Name="UnloadMenuButton";unloadButton=unload;unload.Margin=new Thickness(0,4,16,4);menuRow.Children.Add(unload);
   menuStatusText=Text(menuStatus.Text,13,true,"#DCC8FF");menuStatusText.Name="MenuStatusText";menuStatusText.Margin=new Thickness(16,10,0,5);menuStatusText.VerticalAlignment=VerticalAlignment.Center;menuRow.Children.Add(menuStatusText);module.Children.Add(menuRow);
   module.Children.Add(Text("Unloading removes or restores the automation module (dxgi.dll) only for the installation reported in the status line above.",12,false,"#AEA5C0"));
   module.Children.Add(Text("Removing covers every detected AION2 installation and also deletes verified updater-owned data and caches. Hexor Control Center remains installed; use Windows Settings to uninstall it.",12,false,"#AEA5C0"));
-  var clean=Button("Remove Bot Module",async()=>await RunCleanupAsync());clean.Name="RemoveBotModuleButton";clean.Background=Brush("#69284A");clean.Margin=new Thickness(0,4,0,0);module.Children.Add(clean);
+  var clean=Button("Remove Bot Module",()=>{});clean.Name="RemoveBotModuleButton";clean.Background=Brush("#69284A");clean.Margin=new Thickness(0,4,0,0);module.Children.Add(clean);clean.Click+=(async(_,_)=>await RunCleanupAsync(clean,module));
 
   var folder=Section(root,"Settings folder","Choose your existing settings folder. Changes are saved only when you edit or apply a setting.");
   var folderButtons=new WrapPanel{Orientation=Orientation.Horizontal};
@@ -308,13 +310,18 @@ public sealed class MainWindow : Window
   {
    var discovery=new AionInstallationDiscoveryService();var found=discovery.DiscoverFromSteamLibraries(discovery.ReadSteamLibraries()).ToList();
    if(Model.Detection.ExecutablePath is { } executable){var directory=System.IO.Path.GetDirectoryName(executable);for(var i=0;i<3&&directory!=null;i++)directory=System.IO.Path.GetDirectoryName(directory);if(directory!=null&&discovery.VerifyUserSelectedInstallation(directory) is { } selected)found.Add(selected);}
+   // The bounded fixed-drive scan (seconds) keeps the status truthful for Purple and other
+   // non-Steam layouts even when the game is not running and Steam libraries are unavailable.
+   // Cached briefly so frequent status refreshes do not rescan every drive.
+   if(scanCache==null||scanCacheTime<(DateTime.Now-TimeSpan.FromMinutes(2))){scanCache=discovery.DiscoverOnFixedDrives();scanCacheTime=DateTime.Now;}
+   found.AddRange(scanCache);
    return found.DistinctBy(x=>x.InstallationDirectory,StringComparer.OrdinalIgnoreCase).ToArray();
   }
   internal async Task RefreshMenuStatusAsync()
   {
    var next=new CancellationTokenSource();var previous=Interlocked.Exchange(ref menuRefresh,next);previous?.Cancel();previous?.Dispose();
    menuStatus=new(MenuStatusState.Checking,"Checking — installation discovery in progress");if(menuStatusText!=null)menuStatusText.Text=menuStatus.Text;
-   try{var work=Task.Run(()=>menuStatusService.Check(MenuInstallations(),MenuManifestPath(),next.Token),next.Token);var result=await work.WaitAsync(TimeSpan.FromSeconds(3),next.Token);if(!next.IsCancellationRequested&&ReferenceEquals(menuRefresh,next)){menuStatus=result;if(menuStatusText!=null)menuStatusText.Text=result.Text;Diagnostics.Log("menu-status",$"state={result.State}");}}
+   try{var work=Task.Run(()=>menuStatusService.Check(MenuInstallations(),MenuManifestPath(),next.Token),next.Token);var result=await work.WaitAsync(TimeSpan.FromSeconds(10),next.Token);if(!next.IsCancellationRequested&&ReferenceEquals(menuRefresh,next)){menuStatus=result;if(menuStatusText!=null)menuStatusText.Text=result.Text;if(unloadButton!=null)unloadButton.Content=T(menuStatus.State==MenuStatusState.MenuUnloaded?"Restore menu (this installation)":"Unload menu (this installation)");Diagnostics.Log("menu-status",$"state={result.State}");}}
    catch(TimeoutException){if(ReferenceEquals(menuRefresh,next)){menuStatus=new(MenuStatusState.Error,"Error — menu status could not be determined.");if(menuStatusText!=null)menuStatusText.Text=menuStatus.Text;}Diagnostics.Log("menu-status","status-check-timeout; deadline-ms=3000");}
    catch(OperationCanceledException){}
    catch(Exception e){menuStatus=new(MenuStatusState.Error,"Error — menu status could not be determined.");if(menuStatusText!=null)menuStatusText.Text=menuStatus.Text;Diagnostics.Log("menu-status","status-check-failed; type="+e.GetType().Name);}
@@ -339,10 +346,15 @@ public sealed class MainWindow : Window
   private async Task UnloadMenuAsync()
   {
    await RefreshMenuStatusAsync();
-   if(menuStatus.State==MenuStatusState.GameRunning){MessageBox.Show(this,"Close AION2 before unloading the menu.","Unload Menu",MessageBoxButton.OK,MessageBoxImage.Warning);return;}
-   if(menuStatus.State!=MenuStatusState.MenuDetected){MessageBox.Show(this,menuStatus.Text,"Unload Menu",MessageBoxButton.OK,MessageBoxImage.Information);return;}
-   if(MessageBox.Show(this,$"Remove the verified menu file?\n\nTarget:\n{menuStatus.TargetPath}\n\nOnly this installation-scoped dxgi.dll will be changed.","Unload Menu",MessageBoxButton.YesNo,MessageBoxImage.Warning,MessageBoxResult.No)!=MessageBoxResult.Yes)return;
-   var result=await Task.Run(()=>menuStatusService.Unload(menuStatus,MenuManifestPath()));Diagnostics.Log("menu-unload",$"state={result.State}; target={result.TargetPath}");await RefreshMenuStatusAsync();MessageBox.Show(this,result.Message,"Unload Menu",MessageBoxButton.OK,result.State is VendorOverlayCleanupState.Removed or VendorOverlayCleanupState.Restored?MessageBoxImage.Information:MessageBoxImage.Warning);
+   if(menuStatus.State==MenuStatusState.GameRunning){MessageBox.Show(this,T("Close AION2 before unloading the menu."),T("Unload Menu"),MessageBoxButton.OK,MessageBoxImage.Warning);return;}
+   if(menuStatus.State is not (MenuStatusState.MenuDetected or MenuStatusState.MenuUnloaded)){MessageBox.Show(this,menuStatus.Text,T("Unload Menu"),MessageBoxButton.OK,MessageBoxImage.Information);return;}
+   var restoring=menuStatus.State==MenuStatusState.MenuUnloaded;
+   var confirmed=menuStatus;
+   var confirm=restoring
+    ? Hexor.Translations.LocalizeFormat("Restore the unloaded menu module?\n\nTarget:\n{0}\n\nOnly this installation-scoped file will be changed.",menuStatus.TargetPath)
+    : Hexor.Translations.LocalizeFormat("Temporarily remove the menu module?\n\nTarget:\n{0}\n\nThe file is renamed beside the game and can be restored from this button later.",menuStatus.TargetPath);
+   if(MessageBox.Show(this,confirm,T("Unload Menu"),MessageBoxButton.YesNo,MessageBoxImage.Warning,MessageBoxResult.No)!=MessageBoxResult.Yes)return;
+   var result=await Task.Run(()=>menuStatusService.UnloadOrRestore(confirmed));Diagnostics.Log("menu-unload",$"state={result.State}; target={result.TargetPath}");await RefreshMenuStatusAsync();MessageBox.Show(this,T(result.Message),T("Unload Menu"),MessageBoxButton.OK,result.State is VendorOverlayCleanupState.Removed or VendorOverlayCleanupState.Restored?MessageBoxImage.Information:MessageBoxImage.Warning);
    if(result.State is VendorOverlayCleanupState.Removed or VendorOverlayCleanupState.Restored)await RefreshMenuStatusAsync();
   }
  internal static void LogCleanupCompleted(IReadOnlyList<CleanupPlanItem> results)
@@ -351,16 +363,18 @@ public sealed class MainWindow : Window
   var failed=results.Count(x=>x.State is VendorOverlayCleanupState.Failed or VendorOverlayCleanupState.BlockedByRunningProcess);
   Diagnostics.Log("cleanup","completed; removed="+removed+"; failed="+failed,failed>0?DiagnosticSeverity.Error:DiagnosticSeverity.Information);
  }
- private async Task RunCleanupAsync()
+ private async Task RunCleanupAsync(Button clean,StackPanel module)
  {
-  var progress=Text("Finding installations",12,false,"#CDB6F5");
-  try { var workflow=new CleanupWorkflow(); var plan=await workflow.PrepareUnifiedAsync(stage=>Dispatcher.Invoke(()=>progress.Text=stage));
+  var progress=Text("Finding installations",12,false,"#CDB6F5");progress.Name="CleanupProgressText";module.Children.Add(progress);
+  clean.IsEnabled=false;
+  try { var workflow=new CleanupWorkflow(); var plan=await workflow.PrepareUnifiedAsync(stage=>Dispatcher.Invoke(()=>progress.Text=T(stage)));
    var dlls=plan.Items.Count(x=>x.Kind==CleanupItemKind.PathMatchedDxgi&&x.ExpectedFingerprint!=null);var data=plan.Items.Count(x=>x.Kind is CleanupItemKind.UpdaterData or CleanupItemKind.UpdaterRegistry);
     if(MessageBox.Show(this,$"AION2 installations: {plan.Items.Count(x=>x.Kind==CleanupItemKind.PathMatchedDxgi)}\nAutomation module (dxgi.dll) copies: {dlls}\nUpdater settings, language, license, authorization, cache, and temporary data: {data}\n\nUpdater binaries and Hexor Control Center are preserved. This permanently erases the listed updater data. Confirm removal?","Remove Bot Module",MessageBoxButton.YesNo,MessageBoxImage.Warning,MessageBoxResult.No)!=MessageBoxResult.Yes)return;
-   var results=await workflow.ExecuteAsync(plan,stage=>Dispatcher.Invoke(()=>progress.Text=stage));LogCleanupCompleted(results);var changed=results.Count(x=>x.State is VendorOverlayCleanupState.Removed or VendorOverlayCleanupState.Restored);var blocked=results.Count(x=>x.State==VendorOverlayCleanupState.BlockedByRunningProcess);
+   var results=await workflow.ExecuteAsync(plan,stage=>Dispatcher.Invoke(()=>progress.Text=T(stage)));LogCleanupCompleted(results);var changed=results.Count(x=>x.State is VendorOverlayCleanupState.Removed or VendorOverlayCleanupState.Restored);var blocked=results.Count(x=>x.State==VendorOverlayCleanupState.BlockedByRunningProcess);
      var failed=results.Count(x=>x.State is VendorOverlayCleanupState.Failed or VendorOverlayCleanupState.BlockedByRunningProcess);MessageBox.Show(this,$"Automation modules removed: {results.Count(x=>x.Kind==CleanupItemKind.PathMatchedDxgi&&x.State==VendorOverlayCleanupState.Removed)}\nUpdater data removed: {results.Count(x=>(x.Kind is CleanupItemKind.UpdaterData or CleanupItemKind.UpdaterRegistry)&&x.State==VendorOverlayCleanupState.Removed)}\nSkipped: {results.Count(x=>x.State is VendorOverlayCleanupState.Skipped or VendorOverlayCleanupState.CouldNotVerify)}\nFailed: {failed}","Remove Bot Module",MessageBoxButton.OK,(blocked>0||failed>0)?MessageBoxImage.Warning:MessageBoxImage.Information);
-   } catch(OperationCanceledException) { MessageBox.Show(this,"Removal was cancelled before changes were made.","Remove Bot Module",MessageBoxButton.OK,MessageBoxImage.Information); }
-     catch(Exception e) { MessageBox.Show(this,"Removal could not be prepared: "+e.GetType().Name,"Remove Bot Module",MessageBoxButton.OK,MessageBoxImage.Warning); }
+   } catch(OperationCanceledException) { MessageBox.Show(this,T("Removal was cancelled before changes were made."),T("Remove Bot Module"),MessageBoxButton.OK,MessageBoxImage.Information); }
+     catch(Exception e) { MessageBox.Show(this,T("Removal could not be prepared: ")+e.GetType().Name,T("Remove Bot Module"),MessageBoxButton.OK,MessageBoxImage.Warning); }
+   finally { clean.IsEnabled=true; progress.Text=T("Installation ready."); }
  }
   private async Task RunCacheResetAsync()
   {
